@@ -74,3 +74,46 @@ already love about the workflow carries over from the fork.
 - `qwqw/qwqw` master-login backdoor, `@creationhomes.com.au` default domain
 - Creation Homes branding (now "DefectFlow")
 - Shared Supabase project (DefectFlow gets its own, isolated per org)
+
+## Monetization — decided 2026-06-13
+
+**Two tiers only: Free → Paid at $3.49 / user / month.** (No middle tier — one
+price that scales with team size: a solo supervisor pays $3.49, a 5-person
+builder pays $17.45. Same product; price follows value.)
+
+**Who buys what (same tier, two personas):**
+- **Independent supervisors / TSCs** — buy a single seat for themselves.
+- **Small builders** — buy multiple seats; the manager gets the cross-crew web
+  dashboard. That dashboard + defect statistics is the **moat** — it's why a
+  builder buys one team account instead of stacking solo licences.
+
+**Free tier (the funnel — gate scale & output, never the core loop):**
+- 2–3 active jobs (a real supervisor outgrows this fast)
+- 1 user — *inviting a teammate is the paywall trigger*
+- **Unlimited photos** (photos are the magic; never cap them) **but they
+  auto-expire**: **28 days after upload, or 14 days after the defect is marked
+  complete** (open defects keep the 28-day backstop; completed ones get a
+  14-day grace from completion). Show an in-app countdown badge on free photos
+  — *"deleted in N days · upgrade to keep forever"* — NOT a silent wipe buried
+  in the T&Cs (that's a 1-star-review / trust landmine).
+- PDF reports are **watermarked** ("Made with DefectFlow"); clean export is paid.
+
+**Paid ($3.49/seat):** unlimited jobs, photos kept indefinitely, clean
+(un-watermarked) PDF, multi-user, and the web dashboard + cross-crew defect
+stats for managers.
+
+**Billing mechanics (native phase):** Apple can't bill "per user" natively, so —
+- **Solo** → single seat via **Apple IAP** in-app (15% under the Small Business
+  Program, not 30%).
+- **Teams** → add seats on a **web/Stripe** page, then log into the iOS app
+  (allowed as reader-style; no payment button in-app — cleaner per-seat + dodges
+  Apple's cut on team revenue).
+
+**Build status:** none of this is wired yet — there is no tier/billing field on
+`organizations` today, so everyone currently runs the full app. Enforcement
+(tier flag → job cap, single-user lock, watermark, photo-expiry sweep, countdown
+badge) lands in the monetization/native phase. The **photo-expiry machinery
+already exists** (`sweepExpiredPhotos` in cloud-sync.js, currently a no-op) — it
+just needs the expiry rule above + a `tier='free'` gate so it never touches paid
+accounts. Also required for App Store review: account deletion, privacy policy
+(must disclose the photo-retention rule), and Restore Purchases.
