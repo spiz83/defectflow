@@ -52,7 +52,7 @@ A dedicated Supabase project is up (separate from Creation Homes):
    defects with `org_id`) instead of the old `dm_*` / CH `jobs` tables.
 3. **Onboarding:** on first login, if the user has no org, ask for a company name
    and call the `create_organization()` RPC; then load that org's data.
-4. Paste the URL + anon key into `window.SUPABASE_CONFIG` (index.html) to switch
+4. ✅ Live config wired; auth auto-confirm on; smoke-tested end-to-end (signup → org → job → defect, RLS-scoped). DONE.
    it from local-only to live — do this *after* step 2 so sync matches the schema.
 
 ## Roadmap

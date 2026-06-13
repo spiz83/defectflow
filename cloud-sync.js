@@ -41,16 +41,17 @@
   }
 
   // ---- State ----------------------------------------------------------------
-  // CH Tracker model: no workspaces. RLS scopes data by the signed-in user's
-  // role (manager sees all, supervisor sees only their assigned jobs).
+  // DefectFlow: multi-tenant. Every user belongs to one or more organizations;
+  // currentOrgId is the active one. All data is scoped to that org. Role comes
+  // from org_members.role (owner/admin -> 'manager', supervisor -> 'supervisor').
   let userRole = null;            // 'manager' | 'supervisor'
   let userId = null;
   let userEmail = null;
-  // Handed-over (active=false) jobs are hidden by default; a manager can reveal
-  // them from Manage. Persisted so the choice survives reloads.
+  let currentOrgId = null;        // active organization (set on login/onboarding)
+  let myOrgs = [];                // [{id, name, role}] this user belongs to
   let showInactiveJobs = localStorage.getItem('dm_show_inactive') === '1';
-  // idMap.<entity>[legacyId] = cloud uuid.
-  // addresses: legacyId (hash of job uuid) -> jobs.id (uuid). Read-only.
+  // idMap.<entity>[legacyId] = cloud uuid (jobs/trades/contractors/defects carry
+  // a legacy_id integer = the app's local int id, so this maps cleanly).
   const idMap = { trades: {}, contractors: {}, addresses: {}, defects: {} };
   let snapshot = emptySnap();     // last successfully-synced view of db.data
   let syncing = Promise.resolve();
@@ -324,8 +325,7 @@
     try { ({ data: { user } } = await sb.auth.getUser()); } catch (e) { user = null; }
     if (!user) {
       // Online with no user = genuinely signed out (e.g. password changed).
-      // Offline, getUser can't reach the server — trust the cached session so
-      // the app stays usable in a dead zone instead of locking the user out.
+      // Offline, getUser can't reach the server — trust the cached session.
       if (navigator.onLine) throw new Error('SESSION_EXPIRED');
       const { data: { session } } = await sb.auth.getSession();
       user = session && session.user;
@@ -333,21 +333,66 @@
     }
     userId = user.id;
     userEmail = user.email || null;
+    await resolveOrg();
+  }
+
+  // Which org is this user in? First run with none → onboarding (create company).
+  async function resolveOrg() {
     try {
-      const { data, error } = await sb
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .maybeSingle();
+      const { data, error } = await sb.from('my_orgs').select('id, name, role');
       if (error) throw error;
-      // No profile row → treat as supervisor (RLS will still gate everything).
-      userRole = (data && data.role) || 'supervisor';
+      myOrgs = data || [];
     } catch (e) {
-      // Offline: can't fetch the role — default to supervisor (RLS still gates
-      // on the server once requests resume). Don't block app start.
       if (navigator.onLine) throw e;
-      userRole = userRole || 'supervisor';
+      const saved = localStorage.getItem('df_org');
+      if (saved) { currentOrgId = saved; userRole = userRole || 'manager'; }
+      return;
     }
+    if (myOrgs.length === 0) { await onboardCreateOrg(); return; }
+    const saved = localStorage.getItem('df_org');
+    const pick = myOrgs.find(o => o.id === saved) || myOrgs[0];
+    setCurrentOrg(pick.id, pick.role);
+  }
+
+  function setCurrentOrg(orgId, role) {
+    currentOrgId = orgId;
+    try { localStorage.setItem('df_org', orgId); } catch (e) {}
+    userRole = (role === 'owner' || role === 'admin') ? 'manager' : 'supervisor';
+  }
+
+  // Onboarding overlay — create the company workspace, become its owner.
+  function onboardCreateOrg() {
+    return new Promise((resolve) => {
+      injectStyles();
+      const ov = document.createElement('div'); ov.id = 'cs-overlay';
+      ov.innerHTML = `
+        <div id="cs-card">
+          <div id="cs-brand"><div id="cs-mark">DF</div><div><div class="lt">DefectFlow</div><div class="lb">SITE DEFECT TRACKING</div></div></div>
+          <div id="cs-pglbl">get started</div>
+          <div id="cs-welcome">Create your company</div>
+          <p style="font-size:12.5px;color:var(--t2,#4A4A4A);margin:-8px 0 16px;line-height:1.5;">Your private workspace — jobs, trades, contractors and defects, separate from every other builder.</p>
+          <span class="cs-field-lbl">Company name</span>
+          <input id="cs-org" type="text" placeholder="e.g. Smith Constructions" autocapitalize="words"/>
+          <button class="cs-primary" id="cs-org-go">Create workspace</button>
+          <div id="cs-msg"></div>
+        </div>`;
+      document.body.appendChild(ov);
+      const go = document.getElementById('cs-org-go');
+      const msg = (t) => { const m = document.getElementById('cs-msg'); if (m) { m.textContent = t; m.className = 'err'; } };
+      go.onclick = async () => {
+        const name = (document.getElementById('cs-org').value || '').trim();
+        if (!name) { msg('Enter a company name'); return; }
+        go.disabled = true;
+        try {
+          const { data, error } = await sb.rpc('create_organization', { p_name: name });
+          if (error) throw error;
+          myOrgs = [{ id: data, name, role: 'owner' }];
+          setCurrentOrg(data, 'owner');
+          ov.remove();
+          resolve();
+        } catch (e) { go.disabled = false; msg(e.message || 'Could not create workspace'); }
+      };
+    });
   }
 
   // ===========================================================================
@@ -360,55 +405,44 @@
     await flushPending();
     if (dirty) return;
 
-    // Addresses are CH Tracker jobs (read-only). Everything else is scoped by
-    // RLS to what this user may see — no explicit workspace filter.
-    const [trades, contractors, links, jobs, defects, callups, learning, supers] = await Promise.all([
-      sb.from('dm_trades').select('*'),
-      sb.from('dm_contractors').select('*'),
-      sb.from('dm_contractor_trades').select('contractor_id, trade_id'),
-      sb.from('jobs').select('id, job_number, lot, street, suburb, active'),
-      sb.from('dm_defects').select('*'),
-      sb.from('job_order_profiles').select('job_id, rows'),   // Framework call-up; best-effort
-      sb.from('dm_trade_learning').select('phrase_key, trade, n'),   // learned trades; best-effort
-      // Current supervisor per job → drives the "My Jobs" list. Best-effort: the
-      // view is readable by authenticated users; an error just means no My Jobs.
-      sb.from('v_jobs_with_current_supervisor').select('id, current_supervisor_id, current_supervisor_name, status')
-    ]);
-    for (const r of [trades, contractors, links, jobs, defects]) {
-      if (r.error) throw r.error;
-    }
+    if (!currentOrgId) return;     // no active org yet (onboarding still pending)
+    const org = currentOrgId;
 
-    // reset maps
+    // Org-scoped fetch. RLS already limits to the user's orgs; the explicit
+    // org filter narrows to the ACTIVE org (a user may belong to several).
+    const [trades, contractors, links, jobs, defects] = await Promise.all([
+      sb.from('trades').select('id, legacy_id, name, code').eq('org_id', org),
+      sb.from('contractors').select('id, legacy_id, name, email, phone, is_shared, added_by').eq('org_id', org),
+      sb.from('contractor_trades').select('contractor_id, trade_id'),
+      sb.from('jobs').select('id, legacy_id, lot, street, suburb, job_number, status, supervisor_id').eq('org_id', org),
+      sb.from('defects').select('id, legacy_id, job_id, contractor_id, description, location, status, booking_at, created_at, completed_at').eq('org_id', org)
+    ]);
+    for (const r of [trades, contractors, links, jobs, defects]) { if (r.error) throw r.error; }
+
     idMap.trades = {}; idMap.contractors = {}; idMap.addresses = {}; idMap.defects = {};
     const uuidToLegacy = { trades: {}, contractors: {}, addresses: {} };
-
     const newData = { trades: [], contractors: [], addresses: [], defects: [] };
 
-    trades.data.forEach(t => {
+    (trades.data || []).forEach(t => {
       const lid = t.legacy_id != null ? t.legacy_id : hashId(t.id);
       idMap.trades[lid] = t.id; uuidToLegacy.trades[t.id] = lid;
       newData.trades.push({ id: lid, name: t.name, code: t.code || '' });
     });
 
-    // contractor -> trade legacy ids
     const linksByContractor = {};
-    links.data.forEach(l => {
+    (links.data || []).forEach(l => {
       (linksByContractor[l.contractor_id] = linksByContractor[l.contractor_id] || []).push(l.trade_id);
     });
 
-    contractors.data.forEach(c => {
+    (contractors.data || []).forEach(c => {
       const lid = c.legacy_id != null ? c.legacy_id : hashId(c.id);
       idMap.contractors[lid] = c.id; uuidToLegacy.contractors[c.id] = lid;
-      const tradeUuids = linksByContractor[c.id] || [];
-      const tradeIds = tradeUuids.map(u => uuidToLegacy.trades[u]).filter(x => x != null);
-      const tradeNames = tradeIds
-        .map(tid => (newData.trades.find(t => t.id === tid) || {}).name)
-        .filter(Boolean).join(', ');
+      const tradeIds = (linksByContractor[c.id] || []).map(u => uuidToLegacy.trades[u]).filter(x => x != null);
+      const tradeNames = tradeIds.map(tid => (newData.trades.find(t => t.id === tid) || {}).name).filter(Boolean).join(', ');
       newData.contractors.push({
         id: lid, name: c.name, email: c.email || '', phone: c.phone || '',
         tradeIds, trades: tradeNames || 'No Trade Assigned',
-        isShared: c.is_shared !== false,        // false = private to its adder
-        addedBy: c.added_by || null             // supervisor who added it (if private)
+        isShared: c.is_shared !== false, addedBy: c.added_by || null
       });
     });
 
@@ -419,69 +453,39 @@
       supers.data.forEach(s => { supByJob[s.id] = { id: s.current_supervisor_id || null, name: s.current_supervisor_name || '', status: s.status || '' }; });
     }
 
-    // CH Tracker jobs -> the app's read-only "addresses". A stable hash of the
-    // job uuid is the legacy int id the rest of the app keys off. Address text
-    // is "Lot N, Street" + suburb, job_number kept as propertyNumber for search.
-    jobs.data.forEach(j => {
-      // Hide handed-over jobs (active = false) unless a manager has toggled them on.
-      if (!showInactiveJobs && j.active === false) return;
-      const lid = hashId(j.id);
+    // Jobs (org-owned, builder-entered) -> the app's "addresses". legacy_id is
+    // the app's local int id. Keep lot/street separately for round-trip on push.
+    (jobs.data || []).forEach(j => {
+      const lid = j.legacy_id != null ? j.legacy_id : hashId(j.id);
       idMap.addresses[lid] = j.id; uuidToLegacy.addresses[j.id] = lid;
-      // Clean sort keys: street NAME (strip any leading house number) and the
-      // numeric lot, so the job list can sort by street A-Z then lot number.
       const lm = String(j.lot || '').match(/\d+/);
       newData.addresses.push({
         id: lid,
         street: [j.lot, j.street].filter(Boolean).join(', '),
         suburb: j.suburb || '',
         propertyNumber: j.job_number || '',
-        supervisorId: (supByJob[j.id] || {}).id || null,    // for the "My Jobs" list
-        supervisorName: (supByJob[j.id] || {}).name || '',  // shown to managers
-        jobStatus: (supByJob[j.id] || {}).status || '',     // 'active' = in construction
+        lot: j.lot || '', streetRaw: j.street || '',
+        supervisorId: j.supervisor_id || null,
+        supervisorName: '',
+        jobStatus: j.status || 'active',
         streetName: String(j.street || '').replace(/^\s*\d+[a-zA-Z]?\s+/, '').trim(),
         lotNo: lm ? parseInt(lm[0], 10) : 0
       });
     });
 
-    // Framework call-up rows, keyed by address legacy id. Best-effort: a SELECT
-    // error (RLS / table absent) just yields no suggestions, never breaks a pull.
-    callupsByAddress = {};
-    if (callups && !callups.error && Array.isArray(callups.data)) {
-      callups.data.forEach(p => {
-        const lid = uuidToLegacy.addresses[p.job_id];
-        if (lid == null) return;                          // job not visible to this user
-        callupsByAddress[lid] = Array.isArray(p.rows) ? p.rows : [];
-      });
-    }
-
-    // Learned trade tallies, keyed by normalised phrase. Best-effort.
-    tradeLearning = {};
-    if (learning && !learning.error && Array.isArray(learning.data)) {
-      learning.data.forEach(row => {
-        (tradeLearning[row.phrase_key] = tradeLearning[row.phrase_key] || {})[row.trade] = row.n || 1;
-      });
-    }
-
-    defects.data.forEach(d => {
-      // d.job_id -> address legacy id. Skip any defect whose job isn't visible.
+    (defects.data || []).forEach(d => {
       const addressLid = d.job_id != null ? uuidToLegacy.addresses[d.job_id] : null;
       if (addressLid == null) return;
       const lid = d.legacy_id != null ? d.legacy_id : hashId(d.id);
-      idMap.defects[lid] = d.id;
-      defectUuidToLegacy[d.id] = lid;
+      idMap.defects[lid] = d.id; defectUuidToLegacy[d.id] = lid;
       newData.defects.push({
-        id: lid,
-        addressId: addressLid,
+        id: lid, addressId: addressLid,
         contractorId: uuidToLegacy.contractors[d.contractor_id],
         description: d.description,
-        status: d.status,                       // open | pending | completed
-        completed: d.status === 'completed',     // keep current UI working
-        unassigned: !!d.unassigned,
-        location: d.location || '',               // room/area of the house
-        createdAt: d.created_at,                  // for report date-range filter
-        lastEmailAt: d.last_email_at, lastSmsAt: d.last_sms_at,
-        lastUpdateAt: d.last_update_at, followupAt: d.followup_at,
-        bookingAt: d.booking_at                    // supplier attendance/booking date
+        status: d.status, completed: d.status === 'completed',
+        location: d.location || '',
+        createdAt: d.created_at,
+        bookingAt: d.booking_at
       });
     });
 
@@ -504,7 +508,7 @@
   // Load the per-defect photo counts so the camera badge shows a number.
   async function refreshPhotoCounts() {
     try {
-      const { data, error } = await sb.from('dm_defect_photos')
+      const { data, error } = await sb.from('defect_photos')
         .select('defect_id');
       if (error) throw error;
       // uuid -> legacy id. defectUuidToLegacy is only built during a full pull
@@ -547,56 +551,61 @@
   function byId(arr) { const m = {}; (arr || []).forEach(x => m[x.id] = x); return m; }
 
   async function pushDiff() {
-    if (!userId) return;
+    if (!userId || !currentOrgId) return;
     const cur = db.data || {};
+    const org = currentOrgId;
 
     // ---- Trades ----
     await diffEntity({
-      cur: cur.trades, snap: snapshot.trades, table: 'dm_trades', map: idMap.trades,
-      toRow: (t) => ({ legacy_id: t.id, name: t.name, code: t.code || null }),
+      cur: cur.trades, snap: snapshot.trades, table: 'trades', map: idMap.trades,
+      toRow: (t) => ({ legacy_id: t.id, org_id: org, name: t.name, code: t.code || null }),
       changed: (a, b) => a.name !== b.name || a.code !== b.code
     });
 
     // ---- Contractors ---- (trade links handled after)
     await diffEntity({
-      cur: cur.contractors, snap: snapshot.contractors, table: 'dm_contractors', map: idMap.contractors,
-      toRow: (c) => ({ legacy_id: c.id, name: c.name, email: c.email || null, phone: c.phone || null,
+      cur: cur.contractors, snap: snapshot.contractors, table: 'contractors', map: idMap.contractors,
+      toRow: (c) => ({ legacy_id: c.id, org_id: org, name: c.name, email: c.email || null, phone: c.phone || null,
                        is_shared: c.isShared !== false, added_by: c.addedBy || null }),
       changed: (a, b) => a.name !== b.name || a.email !== b.email || a.phone !== b.phone ||
                          ((a.isShared !== false) !== (b.isShared !== false)) || (a.addedBy || '') !== (b.addedBy || '')
     });
 
-    // Addresses are CH Tracker jobs — read-only, never pushed.
+    // ---- Jobs (addresses) ---- now first-class & builder-editable.
+    await diffEntity({
+      cur: cur.addresses, snap: snapshot.addresses, table: 'jobs', map: idMap.addresses,
+      toRow: (a) => ({ legacy_id: a.id, org_id: org, lot: a.lot || null, street: a.streetRaw || null,
+                       suburb: a.suburb || null, job_number: a.propertyNumber || null,
+                       status: a.jobStatus || 'active', supervisor_id: a.supervisorId || null }),
+      changed: (a, b) => (a.lot || '') !== (b.lot || '') || (a.streetRaw || '') !== (b.streetRaw || '') ||
+                         (a.suburb || '') !== (b.suburb || '') || (a.propertyNumber || '') !== (b.propertyNumber || '') ||
+                         (a.jobStatus || '') !== (b.jobStatus || '') || (a.supervisorId || '') !== (b.supervisorId || '')
+    });
 
     // ---- Defects ---- (depend on address/contractor maps, so go last).
     // Defects whose address (job) couldn't be mapped are skipped — they would
     // fail the job_id-based RLS check anyway.
     await diffEntity({
       cur: (cur.defects || []).filter(d => idMap.addresses[d.addressId]),
-      snap: snapshot.defects, table: 'dm_defects', map: idMap.defects,
-      toRow: (d) => ({
-        legacy_id: d.id,
-        job_id: idMap.addresses[d.addressId] || null,
-        contractor_id: idMap.contractors[d.contractorId] || null,
-        description: d.description,
-        status: d.status || (d.completed ? 'completed' : 'open'),
-        unassigned: !!d.unassigned,
-        location: d.location || null,
-        last_email_at: d.lastEmailAt || null,
-        last_sms_at: d.lastSmsAt || null,
-        last_update_at: d.lastUpdateAt || null,
-        followup_at: d.followupAt || null,
-        booking_at: d.bookingAt || null
-      }),
+      snap: snapshot.defects, table: 'defects', map: idMap.defects,
+      toRow: (d) => {
+        const status = d.status || (d.completed ? 'completed' : 'open');
+        return {
+          legacy_id: d.id, org_id: org,
+          job_id: idMap.addresses[d.addressId] || null,
+          contractor_id: idMap.contractors[d.contractorId] || null,
+          description: d.description,
+          status,
+          location: d.location || null,
+          booking_at: d.bookingAt || null,
+          completed_at: status === 'completed' ? new Date().toISOString() : null
+        };
+      },
       changed: (a, b) =>
         a.description !== b.description || a.addressId !== b.addressId ||
         a.contractorId !== b.contractorId || a.completed !== b.completed ||
         (a.status || '') !== (b.status || '') ||
         (a.location || '') !== (b.location || '') ||
-        (a.lastEmailAt || '') !== (b.lastEmailAt || '') ||
-        (a.lastSmsAt || '') !== (b.lastSmsAt || '') ||
-        (a.lastUpdateAt || '') !== (b.lastUpdateAt || '') ||
-        (a.followupAt || '') !== (b.followupAt || '') ||
         (a.bookingAt || '') !== (b.bookingAt || '')
     });
 
@@ -651,25 +660,25 @@
     }
   }
 
-  // Reconcile dm_contractor_trades against each contractor's tradeIds.
+  // Reconcile contractor_trades against each contractor's tradeIds.
   async function syncContractorTradeLinks(contractors) {
     for (const c of (contractors || [])) {
       const cu = idMap.contractors[c.id];
       if (!cu) continue;
       const want = new Set((c.tradeIds || []).map(t => idMap.trades[t]).filter(Boolean));
       const { data: existing, error } = await sb
-        .from('dm_contractor_trades').select('trade_id').eq('contractor_id', cu);
+        .from('contractor_trades').select('trade_id').eq('contractor_id', cu);
       if (error) throw error;
       const have = new Set((existing || []).map(r => r.trade_id));
       const toAdd = [...want].filter(u => !have.has(u));
       const toDel = [...have].filter(u => !want.has(u));
       if (toAdd.length) {
-        const { error: e } = await sb.from('dm_contractor_trades')
+        const { error: e } = await sb.from('contractor_trades')
           .insert(toAdd.map(u => ({ contractor_id: cu, trade_id: u })));
         if (e) throw e;
       }
       for (const u of toDel) {
-        const { error: e } = await sb.from('dm_contractor_trades')
+        const { error: e } = await sb.from('contractor_trades')
           .delete().eq('contractor_id', cu).eq('trade_id', u);
         if (e) throw e;
       }
@@ -736,8 +745,8 @@
       pullAll().catch(e => console.error('[CloudSync] realtime pull', e));
     }, 800); };
     realtimeChannel = sb.channel('dm-' + userId)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'dm_defects' }, bump)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'dm_contractors' }, bump)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'defects' }, bump)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contractors' }, bump)
       .subscribe();
   }
 
@@ -809,21 +818,21 @@
   async function uploadDefectPhoto(legacyId, file) {
     const uuid = idMap.defects[legacyId];
     if (!uuid) { showToastSafe('Save the defect before adding photos'); return; }
-    const jobUuid = jobUuidForDefect(legacyId);
-    if (!jobUuid) { showToastSafe('This defect has no linked job — cannot store photo'); return; }
+    if (!currentOrgId) { showToastSafe('Not signed in to a workspace'); return; }
     showToastSafe('Compressing photo…');
     let blob;
     try { blob = await compressImage(file); } catch (e) { showToastSafe('Could not read that image'); return; }
     if (!blob) { showToastSafe('Could not process that image'); return; }
-    const path = `${jobUuid}/${uuid}/${randName()}`;
+    // First folder MUST be the org id (storage RLS checks foldername[1] = org).
+    const path = `${currentOrgId}/${uuid}/${randName()}`;
     const up = await sb.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: 'image/jpeg', upsert: false });
     if (up.error) {
       console.error('[CloudSync] upload', up.error);
       showToastSafe('Upload failed: ' + (up.error.message || 'storage error'));
       return;
     }
-    const ins = await sb.from('dm_defect_photos').insert({
-      defect_id: uuid, storage_path: path, bytes: blob.size
+    const ins = await sb.from('defect_photos').insert({
+      org_id: currentOrgId, defect_id: uuid, storage_path: path, bytes: blob.size
     });
     if (ins.error) { console.error(ins.error); showToastSafe('Saved file but record failed'); return; }
     photoCounts[legacyId] = (photoCounts[legacyId] || 0) + 1;   // optimistic badge
@@ -837,20 +846,19 @@
 
   async function deleteOnePhoto(path) {
     await sb.storage.from(PHOTO_BUCKET).remove([path]);
-    await sb.from('dm_defect_photos').delete().eq('storage_path', path);
+    await sb.from('defect_photos').delete().eq('storage_path', path);
   }
 
   // Remove every photo for a defect (used on complete / delete).
   async function deleteAllPhotosForDefect(legacyId) {
     const uuid = idMap.defects[legacyId];
-    const jobUuid = jobUuidForDefect(legacyId);
-    if (uuid && jobUuid) {
-      const prefix = `${jobUuid}/${uuid}`;
+    if (uuid && currentOrgId) {
+      const prefix = `${currentOrgId}/${uuid}`;
       const { data: list } = await sb.storage.from(PHOTO_BUCKET).list(prefix);
       if (list && list.length) {
         await sb.storage.from(PHOTO_BUCKET).remove(list.map(f => `${prefix}/${f.name}`));
       }
-      await sb.from('dm_defect_photos').delete().eq('defect_id', uuid);
+      await sb.from('defect_photos').delete().eq('defect_id', uuid);
     }
     delete photoCounts[legacyId];
   }
@@ -866,19 +874,8 @@
     }
   }
 
-  // 50-day auto-expiry: sweep on login.
-  async function sweepExpiredPhotos() {
-    try {
-      const nowIso = new Date().toISOString();
-      const { data: expired } = await sb.from('dm_defect_photos')
-        .select('storage_path').lt('expires_at', nowIso);
-      if (expired && expired.length) {
-        await sb.storage.from(PHOTO_BUCKET).remove(expired.map(p => p.storage_path));
-        await sb.from('dm_defect_photos').delete().lt('expires_at', nowIso);
-        console.info('[CloudSync] swept ' + expired.length + ' expired photo(s)');
-      }
-    } catch (e) { console.warn('[CloudSync] sweepExpiredPhotos', e); }
-  }
+  // (Photo auto-expiry isn't part of the DefectFlow schema yet — no-op.)
+  async function sweepExpiredPhotos() {}
 
   function showToastSafe(msg) { if (typeof showToast === 'function') showToast(msg); }
 
@@ -919,7 +916,7 @@
     const uuid = idMap.defects[legacyId];
     const body = document.getElementById('cs-gallery-body');
     if (!body) return;
-    const { data: rows, error } = await sb.from('dm_defect_photos')
+    const { data: rows, error } = await sb.from('defect_photos')
       .select('id, storage_path, created_at, expires_at')
       .eq('defect_id', uuid).order('created_at', { ascending: false });
     if (error) { body.innerHTML = '<div style="padding:20px;color:#b00">Could not load photos.</div>'; return; }
@@ -959,7 +956,7 @@
   async function photoDataUrlsForDefect(legacyId, limit = 3) {
     const uuid = idMap.defects[legacyId];
     if (!uuid) return [];
-    const { data: rows } = await sb.from('dm_defect_photos')
+    const { data: rows } = await sb.from('defect_photos')
       .select('storage_path').eq('defect_id', uuid).limit(limit);
     if (!rows || !rows.length) return [];
     const { data: signed } = await sb.storage.from(PHOTO_BUCKET)
@@ -997,7 +994,7 @@
     getLinks: async (legacyId) => {
       const uuid = idMap.defects[legacyId];
       if (!uuid) return [];
-      const { data: rows } = await sb.from('dm_defect_photos').select('storage_path').eq('defect_id', uuid);
+      const { data: rows } = await sb.from('defect_photos').select('storage_path').eq('defect_id', uuid);
       if (!rows || !rows.length) return [];
       const { data: signed } = await sb.storage.from(PHOTO_BUCKET).createSignedUrls(rows.map(r => r.storage_path), 604800);
       return (signed || []).map(s => s.signedUrl).filter(Boolean);
@@ -1006,7 +1003,7 @@
     getFiles: async (legacyId) => {
       const uuid = idMap.defects[legacyId];
       if (!uuid) return [];
-      const { data: rows } = await sb.from('dm_defect_photos').select('storage_path').eq('defect_id', uuid);
+      const { data: rows } = await sb.from('defect_photos').select('storage_path').eq('defect_id', uuid);
       if (!rows || !rows.length) return [];
       const { data: signed } = await sb.storage.from(PHOTO_BUCKET).createSignedUrls(rows.map(r => r.storage_path), 600);
       const files = []; let i = 0;
@@ -1037,47 +1034,27 @@
     }
   };
 
-  // ----- Imported report history (for View Recent / Delete Report) -----
-  function legacyForAddressUuid(uuid) {
-    for (const lid in idMap.addresses) if (idMap.addresses[lid] === uuid) return Number(lid);
-    return null;
-  }
+  // ----- Report history — not in the DefectFlow schema yet; no-op stubs so the
+  //       UI's "Recent Reports" buttons don't error. (PDF generation is local.)
   window.CloudReports = {
-    add: async ({ name, addressLegacyId, defectCount, reportType }) => {
-      const job_id = (addressLegacyId != null) ? (idMap.addresses[addressLegacyId] || null) : null;
-      const { data, error } = await sb.from('dm_reports')
-        .insert({ name: name || 'Report', job_id, defect_count: defectCount || 0, report_type: reportType || null })
-        .select('id, name, defect_count, created_at, job_id, report_type').single();
-      if (error) { console.error('[CloudReports] add', error); return null; }
-      return data;
-    },
-    list: async () => {
-      const { data, error } = await sb.from('dm_reports')
-        .select('id, name, defect_count, created_at, job_id, report_type')
-        .order('created_at', { ascending: false });
-      if (error) { console.error('[CloudReports] list', error); return []; }
-      return (data || []).map(r => ({ ...r, addressLegacyId: legacyForAddressUuid(r.job_id) }));
-    },
-    remove: async (id) => {
-      const { error } = await sb.from('dm_reports').delete().eq('id', id);
-      if (error) { console.error('[CloudReports] remove', error); return false; }
-      return true;
-    }
+    add: async () => null,
+    list: async () => [],
+    remove: async () => true
   };
 
-  // ----- Framework call-up (BPI import contractor suggestions) -----
+  // ----- Framework call-up (CH-only): no suggestions in DefectFlow.
   window.CloudCallups = {
-    rowsForAddress: (legacyId) => callupsByAddress[legacyId] || [],
-    hasProfile: (legacyId) => Array.isArray(callupsByAddress[legacyId]) && callupsByAddress[legacyId].length > 0
+    rowsForAddress: () => [],
+    hasProfile: () => false
   };
 
-  // ----- Job visibility (manager-only: reveal handed-over / inactive jobs) -----
+  // ----- Roles. owner/admin = manager; supervisor = supervisor. -----
   window.CloudJobs = {
     isManager: () => userRole === 'manager',
-    currentUserId: () => userId,          // = current_supervisor_id for my own jobs
+    currentUserId: () => userId,
     role: () => userRole,
+    orgId: () => currentOrgId,
     showInactive: () => showInactiveJobs,
-    // Toggle handed-over jobs on/off and re-pull so the address list updates.
     setShowInactive: async (v) => {
       showInactiveJobs = !!v;
       localStorage.setItem('dm_show_inactive', showInactiveJobs ? '1' : '0');
@@ -1085,23 +1062,10 @@
     }
   };
 
-  // ----- BPI trade learning (suggest + record), shared across all users -----
+  // ----- Trade learning (CH-only): no shared learning in DefectFlow yet.
   window.CloudLearning = {
-    // Best learned trade for a normalised phrase, or null. minN gates confidence.
-    suggestTrade: (phraseKey, minN = 2) => {
-      const tallies = tradeLearning[phraseKey]; if (!tallies) return null;
-      let bestTrade = null, bestN = 0, total = 0;
-      for (const t in tallies) { total += tallies[t]; if (tallies[t] > bestN) { bestN = tallies[t]; bestTrade = t; } }
-      return bestN >= minN ? { trade: bestTrade, n: bestN, total } : null;
-    },
-    // Record a supervisor's trade choice for a phrase (fire-and-forget upsert).
-    record: async (phraseKey, trade) => {
-      if (!userId || !phraseKey || !trade) return;
-      try {
-        await sb.rpc('dm_learn_trade', { p_phrase: phraseKey, p_trade: trade });
-        (tradeLearning[phraseKey] = tradeLearning[phraseKey] || {})[trade] = (tradeLearning[phraseKey][trade] || 0) + 1;
-      } catch (e) { console.warn('[CloudLearning] record', e); }
-    }
+    suggestTrade: () => null,
+    record: async () => {}
   };
 
   // Let the app force an immediate push (don't wait out the 400ms debounce) for

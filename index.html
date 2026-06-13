@@ -1714,20 +1714,26 @@
             }
 
             addAddress(address) {
-                // Addresses now come from CH Tracker jobs (read-only) so the two
-                // apps never double up. Try to match what the user typed to an
-                // existing job; otherwise tell them to add it in CH Tracker.
-                const q = `${address.street || ''} ${address.suburb || ''} ${address.propertyNumber || ''}`.toLowerCase();
-                const tokens = q.split(/\s+/).filter(Boolean);
-                const match = this.data.addresses.find(a => {
-                    const hay = `${a.street} ${a.suburb} ${a.propertyNumber || ''}`.toLowerCase();
-                    return tokens.length && tokens.every(t => hay.includes(t));
-                });
-                if (match) return match;
-                if (typeof showToast === 'function') {
-                    showToast('That property isn’t a CH Tracker job — add it there first, then pick it here.', true);
-                }
-                return null;
+                // DefectFlow: builders create their own jobs/sites. Stores lot &
+                // street separately (for cloud round-trip) plus a combined display
+                // string and the street/lot sort keys.
+                const id = Math.max(0, ...this.data.addresses.map(a => a.id)) + 1;
+                const lot = (address.lot || '').trim();
+                const streetRaw = (address.street || '').trim();
+                const lm = String(lot).match(/\d+/);
+                const newAddr = {
+                    id, lot, streetRaw,
+                    street: [lot, streetRaw].filter(Boolean).join(', '),
+                    suburb: (address.suburb || '').trim(),
+                    propertyNumber: (address.propertyNumber || '').trim(),
+                    supervisorId: null, supervisorName: '',
+                    jobStatus: 'active',
+                    streetName: streetRaw.replace(/^\s*\d+[a-zA-Z]?\s+/, '').trim(),
+                    lotNo: lm ? parseInt(lm[0], 10) : 0
+                };
+                this.data.addresses.push(newAddr);
+                this.save();
+                return newAddr;
             }
 
             deleteAddress(id) {
@@ -6270,16 +6276,44 @@
                     </div>
                 </div>`;
             }).join('');
-            const title = isMgr ? 'All Active Jobs' : 'My Jobs';
-            const emptyMsg = isMgr
-                ? 'Loading jobs… if this stays empty, tap ↻ (bottom-left) to refresh.'
-                : 'No jobs allocated to you yet. Use the search at the top, or tap ↻ (bottom-left) to refresh.';
+            const title = isMgr ? 'Active Jobs' : 'My Jobs';
+            const emptyMsg = 'No jobs yet — tap <b>＋ Add job</b> to create your first site, then start logging defects.';
             const body = list.length ? rows : `<div style="padding:16px;opacity:.7;font-size:13px;">${emptyMsg}</div>`;
             return `
-                <div class="section-title">${title}${list.length ? ` (${list.length})` : ''}</div>
-                <div id="myjobs-list" style="border:1px solid var(--brd,rgba(128,128,128,.25));border-radius:10px;overflow:hidden;max-height:360px;overflow-y:auto;margin-bottom:18px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <div class="section-title" style="margin:0;">${title}${list.length ? ` (${list.length})` : ''}</div>
+                    <div onclick="openAddJob()" title="Add a job/site" style="flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:7px 11px;border:1px solid var(--acc,#1E4DA8);border-radius:8px;color:var(--acc,#1E4DA8);font-size:13px;font-weight:700;cursor:pointer;">＋ Add job</div>
+                </div>
+                <div id="myjobs-list" style="border:1px solid var(--brd,rgba(128,128,128,.25));border-radius:10px;overflow:hidden;max-height:360px;overflow-y:auto;margin-bottom:18px;margin-top:8px;">
                     ${body}
                 </div>`;
+        }
+        // Create a new job/site (DefectFlow builders enter their own).
+        function openAddJob() {
+            const inp = 'width:100%;box-sizing:border-box;padding:11px 12px;margin:4px 0 12px;border:1px solid var(--border-color,#ccc);border-radius:9px;font-size:15px;';
+            const lbl = 'font-size:13px;font-weight:600;color:var(--text-secondary,#666);';
+            impOverlay(`
+                <div id="imp-head"><strong>🏠 Add job / site</strong><button id="imp-close">✕</button></div>
+                <div id="imp-body" style="padding:16px;">
+                    <label style="${lbl}">Lot <span style="font-weight:400;">(optional)</span></label>
+                    <input id="aj-lot" type="text" placeholder="e.g. Lot 12" style="${inp}">
+                    <label style="${lbl}">Street address <span style="color:#dc2626;">*</span></label>
+                    <input id="aj-street" type="text" placeholder="e.g. 14 Banksia Drive" style="${inp}">
+                    <label style="${lbl}">Suburb</label>
+                    <input id="aj-suburb" type="text" placeholder="Suburb" style="${inp}">
+                    <label style="${lbl}">Job number <span style="font-weight:400;">(optional)</span></label>
+                    <input id="aj-num" type="text" placeholder="Your reference" style="${inp}">
+                    <button onclick="saveNewJob()" style="width:100%;background:var(--blue,#1E4DA8);color:#fff;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:15px;cursor:pointer;">Add job</button>
+                </div>`);
+        }
+        function saveNewJob() {
+            const v = (id) => (document.getElementById(id) || {}).value || '';
+            const street = v('aj-street').trim();
+            if (!street) { showToast('Enter a street address'); return; }
+            db.addAddress({ lot: v('aj-lot').trim(), street, suburb: v('aj-suburb').trim(), propertyNumber: v('aj-num').trim() });
+            impClose();
+            render();
+            showToast('Job added');
         }
         // Live-narrow the job list as the manager/supervisor types (DOM hide/show,
         // no re-render so focus is kept).
@@ -7750,12 +7784,12 @@
       // To go live: create a new Supabase project, apply supabase/schema.sql,
       // and paste its URL + anon key below.
       window.SUPABASE_CONFIG = {
-        url:     'YOUR_SUPABASE_URL',
-        anonKey: 'YOUR_SUPABASE_ANON_KEY'
+        url:     'https://ghhotxyboqjgrkrlkwkq.supabase.co',
+        anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdoaG90eHlib3FqZ3Jrcmxrd2txIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMjAyOTYsImV4cCI6MjA5Njg5NjI5Nn0.ypbUk0MoMpoHBWqhHJlC68K50sCFnNUtkNTwul-epSU'
       };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-sync.js?v=df-0001"></script>
+    <script src="cloud-sync.js?v=df-0002"></script>
     <!-- Service worker: precaches the app shell so the app OPENS with no signal,
          and auto-applies new versions (reload once when a new worker takes over). -->
     <script>
