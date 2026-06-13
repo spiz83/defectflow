@@ -388,6 +388,18 @@
           if (error) throw error;
           myOrgs = [{ id: data, name, role: 'owner' }];
           setCurrentOrg(data, 'owner');
+          // Brand-new workspace: discard anything this device cached from a
+          // previous account/org so it can't bleed into — or push up to — the
+          // fresh org. pullAll() below repopulates from the server (starter
+          // trades seeded by create_organization).
+          suppressPush = true;
+          db.data = { addresses: [], contractors: [], trades: [], defects: [] };
+          db.save();
+          suppressPush = false;
+          snapshot = emptySnap();
+          idMap.trades = {}; idMap.contractors = {}; idMap.addresses = {}; idMap.defects = {};
+          dirty = false;
+          persistSyncState();
           ov.remove();
           resolve();
         } catch (e) { go.disabled = false; msg(e.message || 'Could not create workspace'); }
