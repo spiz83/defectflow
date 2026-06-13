@@ -400,7 +400,7 @@
             <option value="UK">United Kingdom</option>
             <option value="GENERIC">Other / International</option>
           </select>
-          <p style="font-size:11.5px;color:var(--t2,#7a7a7a);margin:2px 0 14px;line-height:1.4;">Sets your starter trade list and address format. You can edit everything later.</p>
+          <p style="font-size:11.5px;color:var(--t2,#7a7a7a);margin:2px 0 14px;line-height:1.4;">Sets your starter trade list. You can edit everything later.</p>
           <button class="cs-primary" id="cs-org-go">Create workspace</button>
           <div id="cs-msg"></div>
         </div>`;
@@ -438,7 +438,17 @@
     // to the cloud first; if it still hasn't landed (offline / push error),
     // skip this pull entirely and let the retry settle it.
     await flushPending();
-    if (dirty) return;
+    if (dirty) {
+      // dirty means un-pushed local edits exist — normally we skip the pull to
+      // protect them. BUT if the local cache has no reference data (no trades AND
+      // no contractors), there's nothing precious to protect and we're almost
+      // certainly stuck (a push that keeps failing freezes every pull, so the
+      // cloud copy never arrives). Clear the flag and pull the truth down.
+      const d = db.data || {};
+      const hasRef = ((d.trades || []).length > 0) || ((d.contractors || []).length > 0);
+      if (hasRef) return;
+      dirty = false; persistSyncState();
+    }
 
     if (!currentOrgId) return;     // no active org yet (onboarding still pending)
     const org = currentOrgId;
@@ -1212,6 +1222,12 @@
         // Offline / network failure on first load — fine. The app is usable, the
         // offline banner is up, and edits upload when the connection returns.
         console.warn('[CloudSync] initial pull failed (offline?)', e);
+      }
+      // Self-heal: online with an org but still zero trades means the pull was
+      // skipped (stuck dirty) or failed — force one clean reload from the cloud.
+      if (currentOrgId && navigator.onLine && !((db.data && db.data.trades || []).length)) {
+        try { resetLocalData(); await pullAll(); }
+        catch (e) { console.warn('[CloudSync] self-heal pull failed', e); }
       }
       // `dirty` still set means offline edits are waiting (pullAll skipped/failed
       // to protect them) — don't claim "Synced".

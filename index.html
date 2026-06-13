@@ -6543,37 +6543,16 @@
             impOverlay(`
                 <div id="imp-head"><strong>🏠 Add job / site</strong><button id="imp-close">✕</button></div>
                 <div id="imp-body" style="padding:16px;">
-                    <label style="${lbl}">Project / site name <span style="color:#dc2626;">*</span></label>
-                    <input id="aj-name" type="text" placeholder="e.g. Smith Residence · Lot 12 Maple Estate · 123 Main St" style="${inp}">
-                    <div style="font-size:11.5px;color:var(--text-secondary,#888);margin:-8px 0 14px;line-height:1.4;">However you refer to the job — this is how it shows in your list.</div>
-                    <div style="font-size:12px;font-weight:700;color:var(--text-secondary,#888);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;">Address <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></div>
-                    ${c.showLot ? `<label style="${lbl}">Lot <span style="font-weight:400;">(optional)</span></label>
-                    <input id="aj-lot" type="text" placeholder="e.g. Lot 12" style="${inp}">` : ''}
-                    <label style="${lbl}">Street</label>
-                    <input id="aj-street" type="text" placeholder="${c.streetPh}" style="${inp}">
-                    <label style="${lbl}">${c.locality}</label>
-                    <input id="aj-suburb" type="text" placeholder="${c.locality}" style="${inp}">
-                    <div style="display:flex;gap:10px;">
-                        <div style="flex:1;"><label style="${lbl}">${c.region}</label>
-                        <input id="aj-state" type="text" placeholder="${c.region}" style="${inp}"></div>
-                        <div style="flex:1;"><label style="${lbl}">${c.postcode}</label>
-                        <input id="aj-postcode" type="text" placeholder="${c.postcode}" style="${inp}"></div>
-                    </div>
-                    <label style="${lbl}">Job number <span style="font-weight:400;">(optional)</span></label>
-                    <input id="aj-num" type="text" placeholder="Your reference" style="${inp}">
+                    <label style="${lbl}">Address <span style="color:#dc2626;">*</span></label>
+                    <input id="aj-name" type="text" placeholder="${c.streetPh}" autocapitalize="words" style="${inp}">
+                    <div style="font-size:11.5px;color:var(--text-secondary,#888);margin:-8px 0 14px;line-height:1.4;">One line — however you refer to the job. This is how it shows in your list.</div>
                     <button onclick="saveNewJob()" style="width:100%;background:var(--blue,#1E4DA8);color:#fff;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:15px;cursor:pointer;">Add job</button>
                 </div>`);
         }
         function saveNewJob() {
-            const v = (id) => (document.getElementById(id) || {}).value || '';
-            const name = v('aj-name').trim();
-            if (!name) { showToast('Enter a project / site name'); return; }
-            db.addAddress({
-                name,
-                lot: v('aj-lot').trim(), street: v('aj-street').trim(), suburb: v('aj-suburb').trim(),
-                state: v('aj-state').trim(), postcode: v('aj-postcode').trim(),
-                propertyNumber: v('aj-num').trim()
-            });
+            const addr = ((document.getElementById('aj-name') || {}).value || '').trim();
+            if (!addr) { showToast('Enter an address'); return; }
+            db.addAddress({ name: addr });   // single universal free-text identifier
             impClose();
             render();
             showToast('Job added');
@@ -8052,7 +8031,7 @@
       };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-sync.js?v=df-0008"></script>
+    <script src="cloud-sync.js?v=df-0009"></script>
     <!-- Service worker: precaches the app shell so the app OPENS with no signal,
          and auto-applies new versions (reload once when a new worker takes over). -->
     <script>
