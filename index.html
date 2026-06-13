@@ -1599,6 +1599,9 @@
                     id, lot, streetRaw,
                     street: [lot, streetRaw].filter(Boolean).join(', '),
                     suburb: (address.suburb || '').trim(),
+                    state: (address.state || '').trim(),
+                    postcode: (address.postcode || '').trim(),
+                    country: (address.country || '').trim(),
                     propertyNumber: (address.propertyNumber || '').trim(),
                     supervisorId: null, supervisorName: '',
                     jobStatus: 'active',
@@ -1629,6 +1632,25 @@
 
             getContractor(id) {
                 return this.data.contractors.find(c => c.id === id);
+            }
+
+            getTrade(id) {
+                return this.data.trades.find(t => t.id === id);
+            }
+
+            // The "responsible party" for a defect, for display & grouping:
+            // the real supplier if one is named, otherwise a synthetic party built
+            // from the trade type (negative id so it never collides with a real
+            // contractor id), otherwise an Unassigned fallback. Always returns an
+            // object with {id, name, isTrade} so views never break on a null.
+            partyForDefect(d) {
+                const c = this.getContractor(d.contractorId);
+                if (c) return c;
+                if (d.tradeId != null) {
+                    const t = this.getTrade(d.tradeId);
+                    if (t) return { id: -t.id, name: '🔧 ' + t.name, isTrade: true, tradeId: t.id };
+                }
+                return { id: 'none', name: 'Unassigned', isTrade: false };
             }
 
             addContractor(contractor) {
@@ -1779,7 +1801,7 @@
                 return defects.map(d => ({
                     ...d,
                     address: this.getAddress(d.addressId),
-                    contractor: this.getContractor(d.contractorId)
+                    contractor: this.partyForDefect(d)
                 }));
             }
 
@@ -1806,7 +1828,15 @@
 
             addDefect(defect) {
                 const id = Math.max(0, ...this.data.defects.map(d => d.id)) + 1;
-                const newDefect = { id, status: 'open', ...defect, completed: false };
+                // Every defect rolls up to a TRADE TYPE (cost centre). Use the
+                // explicitly chosen trade if given; otherwise derive it from the
+                // selected supplier's primary trade. Supplier stays optional.
+                let tradeId = defect.tradeId != null ? defect.tradeId : null;
+                if (tradeId == null && defect.contractorId != null) {
+                    const c = this.data.contractors.find(x => x.id === defect.contractorId);
+                    if (c && Array.isArray(c.tradeIds) && c.tradeIds.length) tradeId = c.tradeIds[0];
+                }
+                const newDefect = { id, status: 'open', ...defect, tradeId, completed: false };
                 this.data.defects.push(newDefect);
                 this.save();
                 return newDefect;
@@ -1860,9 +1890,9 @@
                 const byAddress = {};
                 allDefects.forEach(d => {
                     const address = this.getAddress(d.addressId);
-                    const contractor = this.getContractor(d.contractorId);
+                    const contractor = this.partyForDefect(d);
                     if (!address || !contractor) return;
-                    
+
                     const addressKey = formatAddr(address);
                     if (!byAddress[addressKey]) {
                         byAddress[addressKey] = {
@@ -2185,16 +2215,18 @@
             const address = db.getAddress(addressId);
             const defects = db.getDefects({ addressId });
             
-            // Group by contractor
+            // Group by the responsible party (supplier, or trade type if no
+            // supplier was named). d.contractor is the party object from getDefects.
             const byContractor = {};
             defects.forEach(d => {
-                if (!byContractor[d.contractorId]) {
-                    byContractor[d.contractorId] = {
+                const key = d.contractor ? d.contractor.id : 'none';
+                if (!byContractor[key]) {
+                    byContractor[key] = {
                         contractor: d.contractor,
                         defects: []
                     };
                 }
-                byContractor[d.contractorId].defects.push(d);
+                byContractor[key].defects.push(d);
             });
 
             // Completed defects for this address — revealed by the expand button.
@@ -2230,10 +2262,11 @@
                         <div class="contractor-section">
                             <div class="contractor-name contractor-hdr">
                                 <span>${group.contractor.name}</span>
+                                ${!group.contractor.isTrade && group.contractor.id !== 'none' ? `
                                 <span class="supplier-actions">
                                     ${supplierBookingBtn(group.contractor.id, addressId)}
                                     <button class="supplier-email-btn" onclick="emailSupplier(${group.contractor.id}, ${addressId})" title="Email this supplier their items + photos">✉️</button>
-                                </span>
+                                </span>` : ''}
                             </div>
                             ${group.defects.map(defect => `
                                 <div class="defect-item">
@@ -2290,7 +2323,7 @@
                             <div class="autocomplete-container" style="position: relative; margin-bottom: 8px;">
                                 <input type="text" 
                                        id="add-contractor-1-input"
-                                       placeholder="Contractor 1 — start typing name…"
+                                       placeholder="Contractor 1 or trade type — start typing…"
                                        oninput="handleAddDefectsContractorAutocomplete(this, 1)"
                                        onfocus="handleAddDefectsContractorAutocomplete(this, 1)"
                                        style="width: 100%; padding: 12px; border: 1px solid #c6c6c8; border-radius: 10px; font-size: 17px;">
@@ -2306,7 +2339,7 @@
                             <div class="autocomplete-container" style="position: relative; margin-bottom: 8px;">
                                 <input type="text" 
                                        id="add-contractor-2-input"
-                                       placeholder="Contractor 2 — start typing name…"
+                                       placeholder="Contractor 2 or trade type — start typing…"
                                        oninput="handleAddDefectsContractorAutocomplete(this, 2)"
                                        onfocus="handleAddDefectsContractorAutocomplete(this, 2)"
                                        style="width: 100%; padding: 12px; border: 1px solid #c6c6c8; border-radius: 10px; font-size: 17px;">
@@ -2322,7 +2355,7 @@
                             <div class="autocomplete-container" style="position: relative; margin-bottom: 8px;">
                                 <input type="text" 
                                        id="add-contractor-3-input"
-                                       placeholder="Contractor 3 — start typing name…"
+                                       placeholder="Contractor 3 or trade type — start typing…"
                                        oninput="handleAddDefectsContractorAutocomplete(this, 3)"
                                        onfocus="handleAddDefectsContractorAutocomplete(this, 3)"
                                        style="width: 100%; padding: 12px; border: 1px solid #c6c6c8; border-radius: 10px; font-size: 17px;">
@@ -2338,7 +2371,7 @@
                             <div class="autocomplete-container" style="position: relative; margin-bottom: 8px;">
                                 <input type="text" 
                                        id="add-contractor-4-input"
-                                       placeholder="Contractor 4 — start typing name…"
+                                       placeholder="Contractor 4 or trade type — start typing…"
                                        oninput="handleAddDefectsContractorAutocomplete(this, 4)"
                                        onfocus="handleAddDefectsContractorAutocomplete(this, 4)"
                                        style="width: 100%; padding: 12px; border: 1px solid #c6c6c8; border-radius: 10px; font-size: 17px;">
@@ -2354,7 +2387,7 @@
                             <div class="autocomplete-container" style="position: relative; margin-bottom: 8px;">
                                 <input type="text" 
                                        id="add-contractor-5-input"
-                                       placeholder="Contractor 5 — start typing name…"
+                                       placeholder="Contractor 5 or trade type — start typing…"
                                        oninput="handleAddDefectsContractorAutocomplete(this, 5)"
                                        onfocus="handleAddDefectsContractorAutocomplete(this, 5)"
                                        style="width: 100%; padding: 12px; border: 1px solid #c6c6c8; border-radius: 10px; font-size: 17px;">
@@ -2520,10 +2553,10 @@
             const groupedByAddress = {};
             defectsToShow.forEach(defect => {
                 const address = db.getAddress(defect.addressId);
-                const contractor = db.getContractor(defect.contractorId);
-                
+                const contractor = db.partyForDefect(defect);   // supplier, or trade-type party
+
                 if (!address || !contractor) return;
-                
+
                 const addressKey = formatAddress(address);
                 if (!groupedByAddress[addressKey]) {
                     groupedByAddress[addressKey] = {
@@ -3454,26 +3487,57 @@
             
             if (!dropdown) return;
             
-            const contractors = db.getContractors().filter(c => 
-                {
+            if (value === '') { dropdown.classList.remove('active'); return; }
+
+            // Trade TYPES that match — lets you log a defect against a trade with
+            // no specific supplier. Match on any word of the name, or the code.
+            const trades = db.getTrades(false).filter(t => {
+                const words = t.name.toLowerCase().split(/[\s\-&(),/]+/);
+                return words.some(w => w.startsWith(value)) || (t.code && String(t.code).startsWith(value));
+            }).slice(0, 5);
+
+            const contractors = db.getContractors().filter(c => {
                 const nameWords = c.name.toLowerCase().split(' ');
                 const tradesWords = c.trades ? c.trades.toLowerCase().split(' ') : [];
                 return nameWords.some(word => word.startsWith(value)) ||
                        tradesWords.some(word => word.startsWith(value));
-            });
-            
-            if (contractors.length === 0 || value === '') {
+            }).slice(0, 5);
+
+            if (trades.length === 0 && contractors.length === 0) {
                 dropdown.classList.remove('active');
                 return;
             }
-            
-            dropdown.innerHTML = contractors.slice(0, 5).map(c => `
-                <div class="autocomplete-item" onclick="selectAddDefectsContractor(${c.id}, '${c.name.replace(/'/g, "\\'")}', ${contractorNum || 0})">
-                    ${c.name} - ${c.trades || 'No Trade'}
+
+            const tradeRows = trades.map(t => `
+                <div class="autocomplete-item" onclick="selectAddDefectsTrade(${t.id}, '${t.name.replace(/'/g, "\\'")}', ${contractorNum || 0})">
+                    🔧 ${t.name}${t.code ? ' · ' + t.code : ''} <span style="color: var(--text-secondary, #8e8e93); font-size: 12px;">trade type</span>
                 </div>
             `).join('');
-            
+            const contractorRows = contractors.map(c => `
+                <div class="autocomplete-item" onclick="selectAddDefectsContractor(${c.id}, '${c.name.replace(/'/g, "\\'")}', ${contractorNum || 0})">
+                    👤 ${c.name} <span style="color: var(--text-secondary, #8e8e93); font-size: 12px;">${c.trades || 'No Trade'}</span>
+                </div>
+            `).join('');
+
+            dropdown.innerHTML = tradeRows + contractorRows;
             dropdown.classList.add('active');
+        }
+
+        // Log a defect against a TRADE TYPE only (no specific supplier). Mutually
+        // exclusive with a supplier selection for the same block.
+        function selectAddDefectsTrade(id, name, contractorNum) {
+            if (contractorNum) {
+                document.getElementById(`add-contractor-${contractorNum}-input`).value = name;
+                document.getElementById(`add-contractor-${contractorNum}-dropdown`).classList.remove('active');
+                if (!state.selectedAddDefectsTrades) state.selectedAddDefectsTrades = {};
+                state.selectedAddDefectsTrades[contractorNum] = id;
+                if (state.selectedAddDefectsContractors) delete state.selectedAddDefectsContractors[contractorNum];
+            } else {
+                document.getElementById('add-defects-contractor-input').value = name;
+                document.getElementById('add-defects-contractor-dropdown').classList.remove('active');
+                state.selectedAddDefectsTrade = id;
+                state.selectedAddDefectsContractor = null;
+            }
         }
 
         function selectAddDefectsContractor(id, name, contractorNum) {
@@ -3482,10 +3546,12 @@
                 document.getElementById(`add-contractor-${contractorNum}-dropdown`).classList.remove('active');
                 if (!state.selectedAddDefectsContractors) state.selectedAddDefectsContractors = {};
                 state.selectedAddDefectsContractors[contractorNum] = id;
+                if (state.selectedAddDefectsTrades) delete state.selectedAddDefectsTrades[contractorNum];
             } else {
                 document.getElementById('add-defects-contractor-input').value = name;
                 document.getElementById('add-defects-contractor-dropdown').classList.remove('active');
                 state.selectedAddDefectsContractor = id;
+                state.selectedAddDefectsTrade = null;
             }
         }
 
@@ -3638,15 +3704,17 @@
                 if (!contractorInput || !contractorInput.value.trim()) continue;
                 
                 const contractorId = state.selectedAddDefectsContractors && state.selectedAddDefectsContractors[i];
-                if (!contractorId) continue;
-                
-                // Get defects for this contractor
+                const tradeId = state.selectedAddDefectsTrades && state.selectedAddDefectsTrades[i];
+                if (!contractorId && !tradeId) continue;   // block must resolve to a supplier OR a trade type
+
+                // Get defects for this block (a named supplier, or a trade type only)
                 const defectInputs = document.querySelectorAll(`.add-defect-${i}`);
                 defectInputs.forEach(input => {
                     if (input.value.trim()) {
                         const d = db.addDefect({
                             addressId,
-                            contractorId,
+                            contractorId: contractorId || null,
+                            tradeId: tradeId || null,
                             description: input.value.trim()
                         });
                         applyRowExtras(input.closest('.defect-input-row'), d.id);
@@ -3668,7 +3736,8 @@
                 }
                 
                 state.selectedAddDefectsContractors = {};
-                
+                state.selectedAddDefectsTrades = {};
+
                 // Stay on page for more entries
                 render();
             } else {
@@ -6356,18 +6425,37 @@
                 </div>`;
         }
         // Create a new job/site (DefectFlow builders enter their own).
+        // Address-field labels/order follow the workspace Region (set at signup).
+        // Stored data is the same everywhere — only labels/visibility change.
+        function regionAddressConfig() {
+            const r = (window.CloudJobs && window.CloudJobs.region && window.CloudJobs.region()) || 'AU';
+            const cfg = {
+                AU:      { locality: 'Suburb',      region: 'State',          postcode: 'Postcode', showLot: true,  streetPh: 'e.g. 14 Banksia Drive' },
+                US:      { locality: 'City',        region: 'State',          postcode: 'ZIP code', showLot: false, streetPh: 'e.g. 123 Main St' },
+                UK:      { locality: 'Town / City', region: 'County',         postcode: 'Postcode', showLot: false, streetPh: 'e.g. 10 High Street' },
+                GENERIC: { locality: 'City / Town', region: 'State / Region', postcode: 'Postcode', showLot: true,  streetPh: 'e.g. 14 Main Street' }
+            };
+            return cfg[r] || cfg.AU;
+        }
         function openAddJob() {
             const inp = 'width:100%;box-sizing:border-box;padding:11px 12px;margin:4px 0 12px;border:1px solid var(--border-color,#ccc);border-radius:9px;font-size:15px;';
             const lbl = 'font-size:13px;font-weight:600;color:var(--text-secondary,#666);';
+            const c = regionAddressConfig();
             impOverlay(`
                 <div id="imp-head"><strong>🏠 Add job / site</strong><button id="imp-close">✕</button></div>
                 <div id="imp-body" style="padding:16px;">
-                    <label style="${lbl}">Lot <span style="font-weight:400;">(optional)</span></label>
-                    <input id="aj-lot" type="text" placeholder="e.g. Lot 12" style="${inp}">
+                    ${c.showLot ? `<label style="${lbl}">Lot <span style="font-weight:400;">(optional)</span></label>
+                    <input id="aj-lot" type="text" placeholder="e.g. Lot 12" style="${inp}">` : ''}
                     <label style="${lbl}">Street address <span style="color:#dc2626;">*</span></label>
-                    <input id="aj-street" type="text" placeholder="e.g. 14 Banksia Drive" style="${inp}">
-                    <label style="${lbl}">Suburb</label>
-                    <input id="aj-suburb" type="text" placeholder="Suburb" style="${inp}">
+                    <input id="aj-street" type="text" placeholder="${c.streetPh}" style="${inp}">
+                    <label style="${lbl}">${c.locality}</label>
+                    <input id="aj-suburb" type="text" placeholder="${c.locality}" style="${inp}">
+                    <div style="display:flex;gap:10px;">
+                        <div style="flex:1;"><label style="${lbl}">${c.region}</label>
+                        <input id="aj-state" type="text" placeholder="${c.region}" style="${inp}"></div>
+                        <div style="flex:1;"><label style="${lbl}">${c.postcode}</label>
+                        <input id="aj-postcode" type="text" placeholder="${c.postcode}" style="${inp}"></div>
+                    </div>
                     <label style="${lbl}">Job number <span style="font-weight:400;">(optional)</span></label>
                     <input id="aj-num" type="text" placeholder="Your reference" style="${inp}">
                     <button onclick="saveNewJob()" style="width:100%;background:var(--blue,#1E4DA8);color:#fff;border:none;border-radius:9px;padding:13px;font-weight:700;font-size:15px;cursor:pointer;">Add job</button>
@@ -6377,7 +6465,11 @@
             const v = (id) => (document.getElementById(id) || {}).value || '';
             const street = v('aj-street').trim();
             if (!street) { showToast('Enter a street address'); return; }
-            db.addAddress({ lot: v('aj-lot').trim(), street, suburb: v('aj-suburb').trim(), propertyNumber: v('aj-num').trim() });
+            db.addAddress({
+                lot: v('aj-lot').trim(), street, suburb: v('aj-suburb').trim(),
+                state: v('aj-state').trim(), postcode: v('aj-postcode').trim(),
+                propertyNumber: v('aj-num').trim()
+            });
             impClose();
             render();
             showToast('Job added');
@@ -7856,7 +7948,7 @@
       };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-sync.js?v=df-0005"></script>
+    <script src="cloud-sync.js?v=df-0006"></script>
     <!-- Service worker: precaches the app shell so the app OPENS with no signal,
          and auto-applies new versions (reload once when a new worker takes over). -->
     <script>

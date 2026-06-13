@@ -49,6 +49,11 @@
   let userEmail = null;
   let currentOrgId = null;        // active organization (set on login/onboarding)
   let myOrgs = [];                // [{id, name, role}] this user belongs to
+  let currentRegion = localStorage.getItem('df_region') || 'AU';  // drives trade list + address labels
+  function setRegion(r) {
+    currentRegion = (r || 'AU');
+    try { localStorage.setItem('df_region', currentRegion); } catch (e) {}
+  }
   let showInactiveJobs = localStorage.getItem('dm_show_inactive') === '1';
   // idMap.<entity>[legacyId] = cloud uuid (jobs/trades/contractors/defects carry
   // a legacy_id integer = the app's local int id, so this maps cleanly).
@@ -388,6 +393,14 @@
           <p style="font-size:12.5px;color:var(--t2,#4A4A4A);margin:-8px 0 16px;line-height:1.5;">Your private workspace — jobs, trades, contractors and defects, separate from every other builder.</p>
           <span class="cs-field-lbl">Company name</span>
           <input id="cs-org" type="text" placeholder="e.g. Smith Constructions" autocapitalize="words"/>
+          <span class="cs-field-lbl">Region</span>
+          <select id="cs-region" style="width:100%;padding:12px;font-size:15px;border:1px solid var(--bd,#d7d7d7);border-radius:10px;background:#fff;margin-bottom:4px;">
+            <option value="AU">Australia</option>
+            <option value="US">United States</option>
+            <option value="UK">United Kingdom</option>
+            <option value="GENERIC">Other / International</option>
+          </select>
+          <p style="font-size:11.5px;color:var(--t2,#7a7a7a);margin:2px 0 14px;line-height:1.4;">Sets your starter trade list and address format. You can edit everything later.</p>
           <button class="cs-primary" id="cs-org-go">Create workspace</button>
           <div id="cs-msg"></div>
         </div>`;
@@ -397,12 +410,14 @@
       go.onclick = async () => {
         const name = (document.getElementById('cs-org').value || '').trim();
         if (!name) { msg('Enter a company name'); return; }
+        const region = ((document.getElementById('cs-region') || {}).value || 'AU');
         go.disabled = true;
         try {
-          const { data, error } = await sb.rpc('create_organization', { p_name: name });
+          const { data, error } = await sb.rpc('create_organization', { p_name: name, p_region: region });
           if (error) throw error;
           myOrgs = [{ id: data, name, role: 'owner' }];
           setCurrentOrg(data, 'owner');
+          setRegion(region);
           // Brand-new workspace: discard anything this device cached from a
           // previous account/org so it can't bleed into — or push up to — the
           // fresh org. pullAll() below repopulates from the server (starter
@@ -434,10 +449,16 @@
       sb.from('trades').select('id, legacy_id, name, code').eq('org_id', org),
       sb.from('contractors').select('id, legacy_id, name, email, phone, is_shared, added_by').eq('org_id', org),
       sb.from('contractor_trades').select('contractor_id, trade_id'),
-      sb.from('jobs').select('id, legacy_id, lot, street, suburb, job_number, status, supervisor_id').eq('org_id', org),
-      sb.from('defects').select('id, legacy_id, job_id, contractor_id, description, location, status, booking_at, created_at, completed_at').eq('org_id', org)
+      sb.from('jobs').select('id, legacy_id, lot, street, suburb, state, postcode, country, job_number, status, supervisor_id').eq('org_id', org),
+      sb.from('defects').select('id, legacy_id, job_id, contractor_id, trade_id, description, location, status, booking_at, created_at, completed_at').eq('org_id', org)
     ]);
     for (const r of [trades, contractors, links, jobs, defects]) { if (r.error) throw r.error; }
+
+    // Region (drives the trade preset + address-field labels). Best-effort.
+    try {
+      const { data: orgRow } = await sb.from('organizations').select('region').eq('id', org).single();
+      if (orgRow && orgRow.region) setRegion(orgRow.region);
+    } catch (e) { /* region is non-critical for the pull */ }
 
     idMap.trades = {}; idMap.contractors = {}; idMap.addresses = {}; idMap.defects = {};
     const uuidToLegacy = { trades: {}, contractors: {}, addresses: {} };
@@ -483,6 +504,7 @@
         id: lid,
         street: [j.lot, j.street].filter(Boolean).join(', '),
         suburb: j.suburb || '',
+        state: j.state || '', postcode: j.postcode || '', country: j.country || '',
         propertyNumber: j.job_number || '',
         lot: j.lot || '', streetRaw: j.street || '',
         supervisorId: j.supervisor_id || null,
@@ -501,6 +523,7 @@
       newData.defects.push({
         id: lid, addressId: addressLid,
         contractorId: uuidToLegacy.contractors[d.contractor_id],
+        tradeId: d.trade_id != null ? uuidToLegacy.trades[d.trade_id] : null,
         description: d.description,
         status: d.status, completed: d.status === 'completed',
         location: d.location || '',
@@ -598,10 +621,13 @@
     await diffEntity({
       cur: cur.addresses, snap: snapshot.addresses, table: 'jobs', map: idMap.addresses,
       toRow: (a) => ({ legacy_id: a.id, org_id: org, lot: a.lot || null, street: a.streetRaw || null,
-                       suburb: a.suburb || null, job_number: a.propertyNumber || null,
+                       suburb: a.suburb || null, state: a.state || null, postcode: a.postcode || null,
+                       country: a.country || null, job_number: a.propertyNumber || null,
                        status: a.jobStatus || 'active', supervisor_id: a.supervisorId || null }),
       changed: (a, b) => (a.lot || '') !== (b.lot || '') || (a.streetRaw || '') !== (b.streetRaw || '') ||
                          (a.suburb || '') !== (b.suburb || '') || (a.propertyNumber || '') !== (b.propertyNumber || '') ||
+                         (a.state || '') !== (b.state || '') || (a.postcode || '') !== (b.postcode || '') ||
+                         (a.country || '') !== (b.country || '') ||
                          (a.jobStatus || '') !== (b.jobStatus || '') || (a.supervisorId || '') !== (b.supervisorId || '')
     });
 
@@ -617,6 +643,7 @@
           legacy_id: d.id, org_id: org,
           job_id: idMap.addresses[d.addressId] || null,
           contractor_id: idMap.contractors[d.contractorId] || null,
+          trade_id: d.tradeId != null ? (idMap.trades[d.tradeId] || null) : null,
           description: d.description,
           status,
           location: d.location || null,
@@ -627,6 +654,7 @@
       changed: (a, b) =>
         a.description !== b.description || a.addressId !== b.addressId ||
         a.contractorId !== b.contractorId || a.completed !== b.completed ||
+        (a.tradeId == null ? null : a.tradeId) !== (b.tradeId == null ? null : b.tradeId) ||
         (a.status || '') !== (b.status || '') ||
         (a.location || '') !== (b.location || '') ||
         (a.bookingAt || '') !== (b.bookingAt || '')
@@ -1077,6 +1105,7 @@
     currentUserId: () => userId,
     role: () => userRole,
     orgId: () => currentOrgId,
+    region: () => currentRegion,
     showInactive: () => showInactiveJobs,
     setShowInactive: async (v) => {
       showInactiveJobs = !!v;
