@@ -77,6 +77,21 @@
     return { trades: {}, contractors: {}, addresses: {}, defects: {} };
   }
 
+  // Discard everything this device cached for some OTHER (or no) org, so it can
+  // neither display under nor push up to the active org. Clears the in-memory
+  // data + the diff baseline + the id map + the un-pushed flag, and the local
+  // cache. pullAll() then repopulates from the server as the source of truth.
+  function resetLocalData() {
+    suppressPush = true;
+    db.data = { addresses: [], contractors: [], trades: [], defects: [] };
+    db.save();
+    suppressPush = false;
+    snapshot = emptySnap();
+    idMap.trades = {}; idMap.contractors = {}; idMap.addresses = {}; idMap.defects = {};
+    dirty = false;
+    persistSyncState();
+  }
+
   // ===========================================================================
   //  1. Auth UI
   // ===========================================================================
@@ -392,14 +407,7 @@
           // previous account/org so it can't bleed into — or push up to — the
           // fresh org. pullAll() below repopulates from the server (starter
           // trades seeded by create_organization).
-          suppressPush = true;
-          db.data = { addresses: [], contractors: [], trades: [], defects: [] };
-          db.save();
-          suppressPush = false;
-          snapshot = emptySnap();
-          idMap.trades = {}; idMap.contractors = {}; idMap.addresses = {}; idMap.defects = {};
-          dirty = false;
-          persistSyncState();
+          resetLocalData();
           ov.remove();
           resolve();
         } catch (e) { go.disabled = false; msg(e.message || 'Could not create workspace'); }
@@ -512,6 +520,9 @@
     suppressPush = false;
     snapshot = cloneSnap(db.data);
     dirty = false; persistSyncState();   // we're now in sync with the cloud
+    // Remember which org this cached data belongs to, so a later boot under a
+    // different org knows to discard it (see the guard in onAuthed).
+    try { localStorage.setItem('cs_data_org', currentOrgId); } catch (e) {}
     // Don't re-render over a form the user is filling in (would lose input).
     if (typeof render === 'function' && !(window.isBusyEditing && window.isBusyEditing())) render();
     refreshPhotoCounts();      // load photo badges (async, re-renders when ready)
@@ -1140,6 +1151,14 @@
       // un-uploaded offline edits, this re-arms `dirty` + the diff baseline so
       // the upcoming pull pushes them out instead of overwriting them.
       restoreSyncState();
+      // If the data cached on this device was last synced against a DIFFERENT
+      // org (account/workspace reset, or a switch between orgs), discard it so
+      // it can't show under — or block the pull for — the active org. This also
+      // clears a stale `dirty` flag whose un-pushed edits belong to a now-gone
+      // org (which would otherwise make pullAll skip and leave stale data stuck).
+      if (currentOrgId && localStorage.getItem('cs_data_org') !== currentOrgId) {
+        resetLocalData();
+      }
       if (!navigator.onLine) {
         setBanner('📴 Working offline — your changes are saved on this phone and will upload automatically when you reconnect.', 'offline');
       }
