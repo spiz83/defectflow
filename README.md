@@ -31,14 +31,29 @@ With `SUPABASE_CONFIG` left as the `YOUR_…` placeholders (in `index.html`), it
 runs **local-only**: no login, data stays on the device. Good for showing the
 flow without standing up a backend.
 
-## Going live (Phase 2 — multi-tenant backend)
+## Backend — LIVE (provisioned 2026-06-13)
 
-1. **Create a NEW Supabase project** (not the Creation Homes one). Free tier is fine.
-2. Apply the schema: run `supabase/schema.sql` in the SQL editor.
-3. Create a Storage bucket `defect-photos` (private) with RLS scoped by org.
-4. Paste the project **URL + anon key** into `window.SUPABASE_CONFIG` in `index.html`.
-5. Re-point `cloud-sync.js` at the new org-scoped tables (jobs/trades/contractors/
+A dedicated Supabase project is up (separate from Creation Homes):
+
+| | |
+|---|---|
+| Project | **DefectFlow** (org: Homes Dashboard, region ap-southeast-2) |
+| Ref | `ghhotxyboqjgrkrlkwkq` |
+| URL | `https://ghhotxyboqjgrkrlkwkq.supabase.co` |
+| Anon key (public) | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdoaG90eHlib3FqZ3Jrcmxrd2txIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMjAyOTYsImV4cCI6MjA5Njg5NjI5Nn0.ypbUk0MoMpoHBWqhHJlC68K50sCFnNUtkNTwul-epSU` |
+| Schema + RLS | applied (10 tables, 14 policies) |
+| Storage bucket | `defect-photos` (private) created |
+| DB password | in gitignored `.db_password_SAVE_ME.txt` — **save it elsewhere** |
+
+## Going live (remaining Phase 2 — wire the app to the backend)
+
+1. ✅ New Supabase project + `supabase/schema.sql` applied + storage bucket — DONE.
+2. **Wire `cloud-sync.js`** to the org-scoped tables (jobs/trades/contractors/
    defects with `org_id`) instead of the old `dm_*` / CH `jobs` tables.
+3. **Onboarding:** on first login, if the user has no org, ask for a company name
+   and call the `create_organization()` RPC; then load that org's data.
+4. Paste the URL + anon key into `window.SUPABASE_CONFIG` (index.html) to switch
+   it from local-only to live — do this *after* step 2 so sync matches the schema.
 
 ## Roadmap
 

@@ -2,3 +2,6 @@ node_modules/
 package-lock.json
 package.json
 _check.js
+
+# never commit the DB password
+.db_password_SAVE_ME.txt
