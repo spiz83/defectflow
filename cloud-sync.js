@@ -449,7 +449,7 @@
       sb.from('trades').select('id, legacy_id, name, code').eq('org_id', org),
       sb.from('contractors').select('id, legacy_id, name, email, phone, is_shared, added_by').eq('org_id', org),
       sb.from('contractor_trades').select('contractor_id, trade_id'),
-      sb.from('jobs').select('id, legacy_id, lot, street, suburb, state, postcode, country, job_number, status, supervisor_id').eq('org_id', org),
+      sb.from('jobs').select('id, legacy_id, name, lot, street, suburb, state, postcode, country, job_number, status, supervisor_id').eq('org_id', org),
       sb.from('defects').select('id, legacy_id, job_id, contractor_id, trade_id, description, location, status, booking_at, created_at, completed_at').eq('org_id', org)
     ]);
     for (const r of [trades, contractors, links, jobs, defects]) { if (r.error) throw r.error; }
@@ -502,6 +502,7 @@
       const lm = String(j.lot || '').match(/\d+/);
       newData.addresses.push({
         id: lid,
+        name: j.name || '',
         street: [j.lot, j.street].filter(Boolean).join(', '),
         suburb: j.suburb || '',
         state: j.state || '', postcode: j.postcode || '', country: j.country || '',
@@ -620,11 +621,12 @@
     // ---- Jobs (addresses) ---- now first-class & builder-editable.
     await diffEntity({
       cur: cur.addresses, snap: snapshot.addresses, table: 'jobs', map: idMap.addresses,
-      toRow: (a) => ({ legacy_id: a.id, org_id: org, lot: a.lot || null, street: a.streetRaw || null,
-                       suburb: a.suburb || null, state: a.state || null, postcode: a.postcode || null,
-                       country: a.country || null, job_number: a.propertyNumber || null,
+      toRow: (a) => ({ legacy_id: a.id, org_id: org, name: a.name || null, lot: a.lot || null,
+                       street: a.streetRaw || null, suburb: a.suburb || null, state: a.state || null,
+                       postcode: a.postcode || null, country: a.country || null, job_number: a.propertyNumber || null,
                        status: a.jobStatus || 'active', supervisor_id: a.supervisorId || null }),
-      changed: (a, b) => (a.lot || '') !== (b.lot || '') || (a.streetRaw || '') !== (b.streetRaw || '') ||
+      changed: (a, b) => (a.name || '') !== (b.name || '') ||
+                         (a.lot || '') !== (b.lot || '') || (a.streetRaw || '') !== (b.streetRaw || '') ||
                          (a.suburb || '') !== (b.suburb || '') || (a.propertyNumber || '') !== (b.propertyNumber || '') ||
                          (a.state || '') !== (b.state || '') || (a.postcode || '') !== (b.postcode || '') ||
                          (a.country || '') !== (b.country || '') ||

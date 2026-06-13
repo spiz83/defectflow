@@ -1578,9 +1578,10 @@
 
             // Address operations
             getAddresses() {
-                return this.data.addresses.sort((a, b) => 
-                    a.street.localeCompare(b.street)
-                );
+                // Sort by the project/site name (primary label), falling back to
+                // the street for legacy jobs that have no name.
+                const key = (x) => ((x.name && x.name.trim()) ? x.name : (x.street || '')).toLowerCase();
+                return this.data.addresses.sort((a, b) => key(a).localeCompare(key(b)));
             }
 
             getAddress(id) {
@@ -1594,10 +1595,15 @@
                 const id = Math.max(0, ...this.data.addresses.map(a => a.id)) + 1;
                 const lot = (address.lot || '').trim();
                 const streetRaw = (address.street || '').trim();
+                const name = (address.name || '').trim();
                 const lm = String(lot).match(/\d+/);
                 const newAddr = {
-                    id, lot, streetRaw,
-                    street: [lot, streetRaw].filter(Boolean).join(', '),
+                    id,
+                    // Universal: project/site name is the primary label; the address
+                    // is a single free-text line (kept in street for cloud round-trip).
+                    name,
+                    lot, streetRaw,
+                    street: [lot, streetRaw].filter(Boolean).join(', ') || streetRaw,
                     suburb: (address.suburb || '').trim(),
                     state: (address.state || '').trim(),
                     postcode: (address.postcode || '').trim(),
@@ -1605,7 +1611,8 @@
                     propertyNumber: (address.propertyNumber || '').trim(),
                     supervisorId: null, supervisorName: '',
                     jobStatus: 'active',
-                    streetName: streetRaw.replace(/^\s*\d+[a-zA-Z]?\s+/, '').trim(),
+                    // Sort key: project name when present, else the street.
+                    streetName: (name || streetRaw.replace(/^\s*\d+[a-zA-Z]?\s+/, '')).trim(),
                     lotNo: lm ? parseInt(lm[0], 10) : 0
                 };
                 this.data.addresses.push(newAddr);
@@ -1950,21 +1957,32 @@
 
         // UI Helper Functions
         
-        // Unified address formatting - always: "Street, Suburb - PropertyNumber"
+        // Universal job label: the Project/site name is the primary identifier
+        // (works in any country). Falls back to the legacy address parts for jobs
+        // created before project names (and for imported data).
         function formatAddress(address) {
             if (!address) return '';
+            if (address.name && address.name.trim()) return address.name.trim();
             const street = address.street || '';
             const suburb = address.suburb || '';
             const propNum = address.propertyNumber || '';
-            
             let result = street;
-            if (suburb) {
-                result += `, ${suburb}`;
-            }
-            if (propNum) {
-                result += ` - ${propNum}`;
-            }
+            if (suburb) result += `, ${suburb}`;
+            if (propNum) result += ` - ${propNum}`;
             return result;
+        }
+
+        // The free-text address line for a job (shown under the name, used in
+        // reports). Universal — whatever the builder typed.
+        function jobAddressLine(address) {
+            if (!address) return '';
+            if (address.name && address.name.trim()) {
+                // name is the title → street holds the free-text address
+                return [address.street, address.suburb, address.state, address.postcode]
+                    .map(s => (s || '').trim()).filter(Boolean).join(', ');
+            }
+            return [address.suburb, address.state, address.postcode]
+                .map(s => (s || '').trim()).filter(Boolean).join(', ');
         }
         
         function showToast(message, isError = false) {
@@ -2855,8 +2873,10 @@
                 return;
             }
             
-            const address = db.getAddresses().find(a => 
-                a.street.toLowerCase().includes(input.toLowerCase())
+            const q = input.toLowerCase();
+            const address = db.getAddresses().find(a =>
+                (a.name || '').toLowerCase().includes(q) ||
+                (a.street || '').toLowerCase().includes(q)
             );
             if (address) {
                 state.currentView = 'view-defects-address';
@@ -3149,7 +3169,7 @@
                     return a.street.localeCompare(b.street);
                 })
                 .map(a => ({
-                    label: `${a.street}, ${a.suburb}${a.propertyNumber ? ' - ' + a.propertyNumber : ''}`,
+                    label: `${formatAddress(a)}`,
                     value: a.street,
                     id: a.id,
                     type: 'address',
@@ -3292,16 +3312,19 @@
             const isNumeric = /^\d/.test(value);
             
             const addresses = db.getAddresses().filter(a => {
-                const streetWords = a.street.toLowerCase().split(' ');
-                const suburbWords = a.suburb.toLowerCase().split(' ');
+                const nameWords = (a.name || '').toLowerCase().split(' ');
+                const streetWords = (a.street || '').toLowerCase().split(' ');
+                const suburbWords = (a.suburb || '').toLowerCase().split(' ');
                 const lotNumber = a.propertyNumber ? a.propertyNumber.toLowerCase() : '';
-                
+
                 if (isNumeric) {
                     return lotNumber.startsWith(value) ||
+                           nameWords.some(word => word.startsWith(value)) ||
                            streetWords.some(word => word.startsWith(value));
                 }
-                
-                return streetWords.some(word => word.startsWith(value)) || 
+
+                return nameWords.some(word => word.startsWith(value)) ||
+                       streetWords.some(word => word.startsWith(value)) ||
                        suburbWords.some(word => word.startsWith(value));
             }).sort((a, b) => {
                 if (isNumeric) {
@@ -3342,8 +3365,8 @@
             }
             
             dropdown.innerHTML = addresses.slice(0, 5).map(a => `
-                <div class="autocomplete-item" onclick="selectQuickAddress(${a.id}, '${a.street}, ${a.suburb}${a.propertyNumber ? ' - ' + a.propertyNumber : ''}')">
-                    ${a.street}, ${a.suburb}${a.propertyNumber ? ' - ' + a.propertyNumber : ''}
+                <div class="autocomplete-item" onclick="selectQuickAddress(${a.id}, '${formatAddress(a)}')">
+                    ${formatAddress(a)}
                 </div>
             `).join('');
             
@@ -3416,16 +3439,19 @@
             const isNumeric = /^\d/.test(value);
             
             const addresses = db.getAddresses().filter(a => {
-                const streetWords = a.street.toLowerCase().split(' ');
-                const suburbWords = a.suburb.toLowerCase().split(' ');
+                const nameWords = (a.name || '').toLowerCase().split(' ');
+                const streetWords = (a.street || '').toLowerCase().split(' ');
+                const suburbWords = (a.suburb || '').toLowerCase().split(' ');
                 const lotNumber = a.propertyNumber ? a.propertyNumber.toLowerCase() : '';
-                
+
                 if (isNumeric) {
                     return lotNumber.startsWith(value) ||
+                           nameWords.some(word => word.startsWith(value)) ||
                            streetWords.some(word => word.startsWith(value));
                 }
-                
-                return streetWords.some(word => word.startsWith(value)) || 
+
+                return nameWords.some(word => word.startsWith(value)) ||
+                       streetWords.some(word => word.startsWith(value)) ||
                        suburbWords.some(word => word.startsWith(value));
             }).sort((a, b) => {
                 if (isNumeric) {
@@ -3466,8 +3492,8 @@
             }
             
             dropdown.innerHTML = addresses.slice(0, 5).map(a => `
-                <div class="autocomplete-item" onclick="selectAddDefectsAddress(${a.id}, '${a.street}, ${a.suburb}${a.propertyNumber ? ' - ' + a.propertyNumber : ''}')">
-                    ${a.street}, ${a.suburb}${a.propertyNumber ? ' - ' + a.propertyNumber : ''}
+                <div class="autocomplete-item" onclick="selectAddDefectsAddress(${a.id}, '${formatAddress(a)}')">
+                    ${formatAddress(a)}
                 </div>
             `).join('');
             
@@ -4147,8 +4173,10 @@
 
         function addDefectsByAddress() {
             const input = document.getElementById('add-address').value;
-            const address = db.getAddresses().find(a => 
-                a.street.toLowerCase().includes(input.toLowerCase())
+            const q = input.toLowerCase();
+            const address = db.getAddresses().find(a =>
+                (a.name || '').toLowerCase().includes(q) ||
+                (a.street || '').toLowerCase().includes(q)
             );
             if (address) {
                 state.currentView = 'add-defects-address';
@@ -4838,16 +4866,19 @@
             const isNumeric = /^\d/.test(value);
             
             const addresses = db.getAddresses().filter(a => {
-                const streetWords = a.street.toLowerCase().split(' ');
-                const suburbWords = a.suburb.toLowerCase().split(' ');
+                const nameWords = (a.name || '').toLowerCase().split(' ');
+                const streetWords = (a.street || '').toLowerCase().split(' ');
+                const suburbWords = (a.suburb || '').toLowerCase().split(' ');
                 const lotNumber = a.propertyNumber ? a.propertyNumber.toLowerCase() : '';
-                
+
                 if (isNumeric) {
                     return lotNumber.startsWith(value) ||
+                           nameWords.some(word => word.startsWith(value)) ||
                            streetWords.some(word => word.startsWith(value));
                 }
-                
-                return streetWords.some(word => word.startsWith(value)) || 
+
+                return nameWords.some(word => word.startsWith(value)) ||
+                       streetWords.some(word => word.startsWith(value)) ||
                        suburbWords.some(word => word.startsWith(value));
             }).sort((a, b) => {
                 if (isNumeric) {
@@ -4889,7 +4920,7 @@
             
             dropdown.innerHTML = addresses.slice(0, 5).map(a => `
                 <div class="autocomplete-item" onclick="selectAddressForGroup(${groupIndex}, ${a.id}, '${a.street.replace(/'/g, "\\'")}')">
-                    ${a.street}, ${a.suburb}${a.propertyNumber ? ' - ' + a.propertyNumber : ''}
+                    ${formatAddress(a)}
                 </div>
             `).join('');
             
@@ -6388,9 +6419,9 @@
             const addrStyle = 'flex:1 1 auto;min-width:0;cursor:pointer;overflow:hidden;';
             const icoStyle = 'flex:0 0 auto;width:40px;height:40px;border-radius:8px;border:1px solid var(--brd,rgba(128,128,128,.3));cursor:pointer;font-size:18px;line-height:38px;text-align:center;';
             const rows = list.map(a => {
-                const sub = [a.suburb || '', a.propertyNumber || '', isMgr ? (a.supervisorName || 'Unassigned') : '']
+                const sub = [jobAddressLine(a), a.propertyNumber || '', isMgr ? (a.supervisorName || 'Unassigned') : '']
                     .filter(Boolean).join(' · ');
-                const key = `${a.street} ${a.suburb || ''} ${a.propertyNumber || ''} ${a.supervisorName || ''}`.toLowerCase();
+                const key = `${a.name || ''} ${a.street || ''} ${a.suburb || ''} ${a.propertyNumber || ''} ${a.supervisorName || ''}`.toLowerCase();
                 const oc = outstanding[a.id] || 0;
                 const flagged = markersOn && oc > 0;
                 // Flagged jobs get a red left bar + a count badge so it's obvious
@@ -6402,7 +6433,7 @@
                 return `
                 <div data-job-search="${key}" style="${rowStyle}">
                     <div style="${addrStyle}" onclick="viewDefectsForJob(${a.id})" title="View defects">
-                        <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${a.street}</div>
+                        <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${formatAddress(a)}</div>
                         <div style="font-size:12px;opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sub}</div>
                     </div>
                     ${badge}
@@ -6444,9 +6475,13 @@
             impOverlay(`
                 <div id="imp-head"><strong>🏠 Add job / site</strong><button id="imp-close">✕</button></div>
                 <div id="imp-body" style="padding:16px;">
+                    <label style="${lbl}">Project / site name <span style="color:#dc2626;">*</span></label>
+                    <input id="aj-name" type="text" placeholder="e.g. Smith Residence · Lot 12 Maple Estate · 123 Main St" style="${inp}">
+                    <div style="font-size:11.5px;color:var(--text-secondary,#888);margin:-8px 0 14px;line-height:1.4;">However you refer to the job — this is how it shows in your list.</div>
+                    <div style="font-size:12px;font-weight:700;color:var(--text-secondary,#888);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;">Address <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></div>
                     ${c.showLot ? `<label style="${lbl}">Lot <span style="font-weight:400;">(optional)</span></label>
                     <input id="aj-lot" type="text" placeholder="e.g. Lot 12" style="${inp}">` : ''}
-                    <label style="${lbl}">Street address <span style="color:#dc2626;">*</span></label>
+                    <label style="${lbl}">Street</label>
                     <input id="aj-street" type="text" placeholder="${c.streetPh}" style="${inp}">
                     <label style="${lbl}">${c.locality}</label>
                     <input id="aj-suburb" type="text" placeholder="${c.locality}" style="${inp}">
@@ -6463,10 +6498,11 @@
         }
         function saveNewJob() {
             const v = (id) => (document.getElementById(id) || {}).value || '';
-            const street = v('aj-street').trim();
-            if (!street) { showToast('Enter a street address'); return; }
+            const name = v('aj-name').trim();
+            if (!name) { showToast('Enter a project / site name'); return; }
             db.addAddress({
-                lot: v('aj-lot').trim(), street, suburb: v('aj-suburb').trim(),
+                name,
+                lot: v('aj-lot').trim(), street: v('aj-street').trim(), suburb: v('aj-suburb').trim(),
                 state: v('aj-state').trim(), postcode: v('aj-postcode').trim(),
                 propertyNumber: v('aj-num').trim()
             });
@@ -7948,7 +7984,7 @@
       };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-sync.js?v=df-0006"></script>
+    <script src="cloud-sync.js?v=df-0007"></script>
     <!-- Service worker: precaches the app shell so the app OPENS with no signal,
          and auto-applies new versions (reload once when a new worker takes over). -->
     <script>
