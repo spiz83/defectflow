@@ -1113,6 +1113,14 @@
       showInactiveJobs = !!v;
       localStorage.setItem('dm_show_inactive', showInactiveJobs ? '1' : '0');
       try { await pullAll(); } catch (e) { console.error('[CloudJobs] re-pull', e); }
+    },
+    // Recovery: discard the local cache and re-pull everything fresh from the
+    // cloud. Fixes a device stuck on stale/empty lists (trades, suppliers, jobs)
+    // when the cloud is actually fine. Clears a stuck `dirty` flag too.
+    reloadFromCloud: async () => {
+      resetLocalData();
+      try { await pullAll(); } catch (e) { console.error('[CloudJobs] reloadFromCloud', e); }
+      if (typeof render === 'function') render();
     }
   };
 
