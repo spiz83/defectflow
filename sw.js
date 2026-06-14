@@ -13,13 +13,13 @@
  *
  * Bump CACHE (and the cloud-sync ?v= below) whenever the shell changes.
  */
-const CACHE = 'defectflow-shell-df-0013';
+const CACHE = 'defectflow-shell-df-0014';
 
 // Same-origin shell. All of these must exist or install precache will fail.
 const CORE = [
   './',
   './index.html',
-  './cloud-sync.js?v=df-0013',
+  './cloud-sync.js?v=df-0014',
   './manifest.webmanifest',
   './icon.svg',
   './favicon-48.png',
