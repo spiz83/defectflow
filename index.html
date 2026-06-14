@@ -2098,6 +2098,10 @@
                         </a>
                         <a href="#" class="view-all-link" onclick="event.preventDefault(); viewAllDefects()">View All Defects</a>
                     </div>
+
+                    <button onclick="startTutorial()" style="width:100%;margin:6px 0 22px;background:transparent;border:1px dashed var(--border-color,#bbb);border-radius:10px;padding:13px;font-size:14px;font-weight:600;color:var(--text-secondary,#666);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+                        <span>▶️</span><span>Run the get-started tutorial</span>
+                    </button>
                 </div>
             `;
         }
@@ -8643,7 +8647,7 @@
       };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-sync.js?v=df-0012"></script>
+    <script src="cloud-sync.js?v=df-0013"></script>
     <!-- Service worker: precaches the app shell so the app OPENS with no signal,
          and auto-applies new versions (reload once when a new worker takes over). -->
     <script>
