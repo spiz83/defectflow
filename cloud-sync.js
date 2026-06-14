@@ -423,6 +423,9 @@
           // fresh org. pullAll() below repopulates from the server (starter
           // trades seeded by create_organization).
           resetLocalData();
+          // First-run: guide the new builder through the trade picker instead of
+          // dumping the whole catalogue on them (index.html reads this flag).
+          try { localStorage.setItem('df_trade_setup_pending', '1'); } catch (e) {}
           ov.remove();
           resolve();
         } catch (e) { go.disabled = false; msg(e.message || 'Could not create workspace'); }

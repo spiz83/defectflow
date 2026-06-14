@@ -2658,6 +2658,238 @@
             `;
         }
 
+        // ====================================================================
+        //  Trade catalog (Australian market) + "Get started" trade picker.
+        //  Builders pick the trades they actually use — the workspace starts
+        //  curated, not dumped. `common:true` items are pre-ticked. Codes are AU
+        //  cost centres (optional). Reused at onboarding AND from Manage.
+        // ====================================================================
+        const TRADE_CATALOG_AU = [
+            // Site & Civil
+            { cat:'Site & Civil', code:'060', name:'Site Security & Waste Management' },
+            { cat:'Site & Civil', code:'070', name:'Site Cut & Fill' },
+            { cat:'Site & Civil', code:'080', name:'Site Facilities & Toilet Hire' },
+            { cat:'Site & Civil', code:'090', name:'Silt Fence & Temporary Driveway' },
+            { cat:'Site & Civil', code:'100', name:'Set Out / Surveyor' },
+            { cat:'Site & Civil', code:'119', name:'Sewer & Water Connection' },
+            { cat:'Site & Civil', code:'120', name:'Sewerage & Stormwater Drains' },
+            { cat:'Site & Civil', code:'121', name:'Spoil Removal' },
+            { cat:'Site & Civil', code:'130', name:'Rock Breakout & Removal' },
+            { cat:'Site & Civil', code:'', name:'Soil Testing & Geotech' },
+            { cat:'Site & Civil', code:'', name:'Demolition' },
+            { cat:'Site & Civil', code:'', name:'Tree Removal & Arborist' },
+            { cat:'Site & Civil', code:'', name:'Asbestos Removal' },
+            { cat:'Site & Civil', code:'', name:'Temporary Fencing' },
+            // Footings & Slab
+            { cat:'Footings & Slab', code:'144', name:'Screw Pile Set Out' },
+            { cat:'Footings & Slab', code:'145', name:'Piers & Screw Piles' },
+            { cat:'Footings & Slab', code:'150', name:'Concrete Slabs & Footings', common:true },
+            { cat:'Footings & Slab', code:'160', name:'Termite Proofing - Slab Penetrations' },
+            { cat:'Footings & Slab', code:'170', name:'Concrete Pump' },
+            { cat:'Footings & Slab', code:'180', name:'Concrete Cure' },
+            { cat:'Footings & Slab', code:'', name:'Steel Reinforcement & Mesh' },
+            { cat:'Footings & Slab', code:'', name:'Formwork' },
+            // Frame & Structure
+            { cat:'Frame & Structure', code:'190', name:'Site Grade Back - Post Slab' },
+            { cat:'Frame & Structure', code:'200', name:'Wall Frames & Roof Trusses' },
+            { cat:'Frame & Structure', code:'205', name:'Perimeter Guardrail' },
+            { cat:'Frame & Structure', code:'215', name:'Structural Steel' },
+            { cat:'Frame & Structure', code:'218', name:'Framing Materials & Hardware' },
+            { cat:'Frame & Structure', code:'220', name:'Carpenter - Frame', common:true },
+            { cat:'Frame & Structure', code:'222', name:'Crane Hire' },
+            { cat:'Frame & Structure', code:'224', name:'Void Protection' },
+            { cat:'Frame & Structure', code:'225', name:'Party & Boundary Wall Systems' },
+            // Roofing
+            { cat:'Roofing', code:'230', name:'Metal Fascia & Gutters', common:true },
+            { cat:'Roofing', code:'248', name:'Skylights' },
+            { cat:'Roofing', code:'250', name:'Roof Tiles' },
+            { cat:'Roofing', code:'255', name:'Sheet / Colorbond Roofing', common:true },
+            { cat:'Roofing', code:'330', name:'Box Gutter, Cappings & Flashings' },
+            { cat:'Roofing', code:'', name:'Roof Plumber' },
+            { cat:'Roofing', code:'', name:'Sarking' },
+            // Brickwork & Cladding
+            { cat:'Brickwork & Cladding', code:'280', name:'Brick Sand' },
+            { cat:'Brickwork & Cladding', code:'290', name:'Bricks' },
+            { cat:'Brickwork & Cladding', code:'300', name:'Brick Hardware' },
+            { cat:'Brickwork & Cladding', code:'310', name:'Bricklayer Labour', common:true },
+            { cat:'Brickwork & Cladding', code:'320', name:'Brick Lintels' },
+            { cat:'Brickwork & Cladding', code:'450', name:'Brick Cleaner' },
+            { cat:'Brickwork & Cladding', code:'480', name:'Feature Stone Cladding' },
+            { cat:'Brickwork & Cladding', code:'425', name:'External Wall Cladding - Materials' },
+            { cat:'Brickwork & Cladding', code:'426', name:'External Wall Cladding - Labour' },
+            { cat:'Brickwork & Cladding', code:'260', name:'Foilwrap / Wall Wrap' },
+            { cat:'Brickwork & Cladding', code:'265', name:'Scaffolding' },
+            // Plumbing
+            { cat:'Plumbing', code:'270', name:'Plumber - Rough In', common:true },
+            { cat:'Plumbing', code:'690', name:'Plumber - Fit Off', common:true },
+            { cat:'Plumbing', code:'', name:'Gas Fitting' },
+            { cat:'Plumbing', code:'880', name:'Hot Water System & Solar' },
+            { cat:'Plumbing', code:'890', name:'Rainwater Tanks' },
+            { cat:'Plumbing', code:'620', name:'Kitchen Sinks' },
+            // Electrical & Data
+            { cat:'Electrical & Data', code:'110', name:'Electrical Mains' },
+            { cat:'Electrical & Data', code:'350', name:'Electrical - Rough In', common:true },
+            { cat:'Electrical & Data', code:'', name:'Electrical - Fit Off', common:true },
+            { cat:'Electrical & Data', code:'370', name:'Security & Data Systems' },
+            { cat:'Electrical & Data', code:'', name:'Solar PV & Battery' },
+            { cat:'Electrical & Data', code:'', name:'Smoke Alarms' },
+            { cat:'Electrical & Data', code:'', name:'Antenna & TV' },
+            // Heating & Cooling
+            { cat:'Heating & Cooling', code:'670', name:'Gas Heating Systems' },
+            { cat:'Heating & Cooling', code:'680', name:'Cooling / Air Conditioning' },
+            { cat:'Heating & Cooling', code:'', name:'Ducted Heating' },
+            { cat:'Heating & Cooling', code:'', name:'Evaporative Cooling' },
+            { cat:'Heating & Cooling', code:'', name:'Split Systems' },
+            // Insulation & Linings
+            { cat:'Insulation & Linings', code:'430', name:'Insulation Batts to Walls' },
+            { cat:'Insulation & Linings', code:'700', name:'Insulation to Ceilings' },
+            { cat:'Insulation & Linings', code:'440', name:'Plaster Linings - Materials & Labour', common:true },
+            { cat:'Insulation & Linings', code:'', name:'Plasterer - Set & Cornice' },
+            { cat:'Insulation & Linings', code:'', name:'Villaboard / Wet Area Sheeting' },
+            // Fixing & Carpentry
+            { cat:'Fixing & Carpentry', code:'500', name:'Internal Doors & 2nd Fix Mouldings' },
+            { cat:'Fixing & Carpentry', code:'510', name:'Fix Hardware' },
+            { cat:'Fixing & Carpentry', code:'530', name:'Carpenter - Fix Out', common:true },
+            { cat:'Fixing & Carpentry', code:'650', name:'Carpenter - Fit Off', common:true },
+            { cat:'Fixing & Carpentry', code:'470', name:'Staircase' },
+            { cat:'Fixing & Carpentry', code:'', name:'Skirting & Architraves' },
+            // Wet Areas & Tiling
+            { cat:'Wet Areas & Tiling', code:'550', name:'Waterproofing', common:true },
+            { cat:'Wet Areas & Tiling', code:'600', name:'Wall & Floor Tiles - Supply' },
+            { cat:'Wet Areas & Tiling', code:'610', name:'Wall & Floor Tiles - Labour', common:true },
+            { cat:'Wet Areas & Tiling', code:'630', name:'Shower Screens, Mirrors & Robes' },
+            { cat:'Wet Areas & Tiling', code:'720', name:'Caulking & Joint Sealing' },
+            // Kitchen & Joinery
+            { cat:'Kitchen & Joinery', code:'560', name:'Cabinets & Joinery', common:true },
+            { cat:'Kitchen & Joinery', code:'', name:'Stone Benchtops' },
+            { cat:'Kitchen & Joinery', code:'', name:'Glass Splashback' },
+            { cat:'Kitchen & Joinery', code:'870', name:'Appliances - Electric & Gas' },
+            { cat:'Kitchen & Joinery', code:'', name:'Rangehood' },
+            // Painting & Render
+            { cat:'Painting & Render', code:'570', name:'Painter - Labour & Materials', common:true },
+            { cat:'Painting & Render', code:'590', name:'Painter - QA Retention' },
+            { cat:'Painting & Render', code:'460', name:'Renderer & External Mouldings' },
+            { cat:'Painting & Render', code:'', name:'Texture Coating' },
+            { cat:'Painting & Render', code:'918', name:'Quality Assurance Touch Ups' },
+            // Flooring
+            { cat:'Flooring', code:'805', name:'Timber Flooring' },
+            { cat:'Flooring', code:'810', name:'Carpet & Floor Coverings' },
+            { cat:'Flooring', code:'', name:'Laminate / Hybrid Flooring' },
+            { cat:'Flooring', code:'', name:'Vinyl / Lino' },
+            { cat:'Flooring', code:'', name:'Floor Sanding & Polish' },
+            // Windows, Doors & Glazing
+            { cat:'Windows, Doors & Glazing', code:'210', name:'Windows & Entry Frames', common:true },
+            { cat:'Windows, Doors & Glazing', code:'660', name:'Garage Doors' },
+            { cat:'Windows, Doors & Glazing', code:'770', name:'Window & Door Screens' },
+            { cat:'Windows, Doors & Glazing', code:'790', name:'Window Coverings & Blinds' },
+            { cat:'Windows, Doors & Glazing', code:'', name:'Glazing & Shower Glass' },
+            // Stairs, Balcony & Balustrade
+            { cat:'Stairs, Balcony & Balustrade', code:'525', name:'Balustrades' },
+            { cat:'Stairs, Balcony & Balustrade', code:'523', name:'Balcony - Materials' },
+            { cat:'Stairs, Balcony & Balustrade', code:'524', name:'Balcony - Labour' },
+            // External Works & Landscaping
+            { cat:'External Works & Landscaping', code:'740', name:'Concrete Paving & Driveway' },
+            { cat:'External Works & Landscaping', code:'741', name:'Paving Accessories' },
+            { cat:'External Works & Landscaping', code:'', name:'Exposed Aggregate' },
+            { cat:'External Works & Landscaping', code:'730', name:'Retaining Walls - Landscaping' },
+            { cat:'External Works & Landscaping', code:'072', name:'Retaining Walls - Site Prep' },
+            { cat:'External Works & Landscaping', code:'820', name:'Fencing & Gates' },
+            { cat:'External Works & Landscaping', code:'840', name:'Landscaping - Labour & Material' },
+            { cat:'External Works & Landscaping', code:'780', name:'Clothes Line & Letterbox' },
+            { cat:'External Works & Landscaping', code:'858', name:'Decking & Pergola - Materials' },
+            { cat:'External Works & Landscaping', code:'860', name:'Decking & Pergola - Carpenter' },
+            { cat:'External Works & Landscaping', code:'', name:'Turf & Lawn' },
+            { cat:'External Works & Landscaping', code:'', name:'Irrigation' },
+            // Pest & Termite
+            { cat:'Pest & Termite', code:'340', name:'Physical Perimeter Termite Barrier' },
+            { cat:'Pest & Termite', code:'760', name:'Termite Perimeter Treatment' },
+            { cat:'Pest & Termite', code:'', name:'Pest Control' },
+            // Cleaning
+            { cat:'Cleaning', code:'240', name:'Site Cleaner - OH&S' },
+            { cat:'Cleaning', code:'540', name:'Site Cleaner - 1st' },
+            { cat:'Cleaning', code:'910', name:'Site Cleaner - Final' },
+            { cat:'Cleaning', code:'710', name:'Internal Cleaner - Pre-Clean' },
+            { cat:'Cleaning', code:'830', name:'Internal Cleaner', common:true },
+            { cat:'Cleaning', code:'900', name:'Settlement Re-Clean' },
+            { cat:'Cleaning', code:'', name:'Window Cleaning' },
+            // Inspections & Handover
+            { cat:'Inspections & Handover', code:'', name:'Building Surveyor & Inspections' },
+            { cat:'Inspections & Handover', code:'', name:'Energy Rating' },
+            { cat:'Inspections & Handover', code:'920', name:'Final / QA Inspection', common:true },
+            { cat:'Inspections & Handover', code:'', name:'Handover / PCI', common:true },
+            { cat:'Inspections & Handover', code:'', name:'NBN / Telco' }
+        ];
+
+        function openTradeSetup() {
+            state.currentView = 'trade-setup';
+            render();
+        }
+
+        function renderTradeSetup() {
+            const existing = new Set(db.getTrades().map(t => (t.name || '').toLowerCase().trim()));
+            const cats = [];
+            const byCat = {};
+            TRADE_CATALOG_AU.forEach((t, i) => {
+                if (!byCat[t.cat]) { byCat[t.cat] = []; cats.push(t.cat); }
+                byCat[t.cat].push({ ...t, i });
+            });
+            const sections = cats.map(cat => `
+                <div style="margin-bottom:14px;border:1px solid var(--border-color,#ddd);border-radius:10px;overflow:hidden;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg-secondary,#f3f3f3);">
+                        <div style="font-weight:700;font-size:14px;color:var(--text-primary);">${cat}</div>
+                        <button type="button" onclick="toggleCatalogCat('${cat.replace(/'/g, "\\'")}')" style="background:none;border:1px solid var(--border-color,#ccc);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;color:inherit;">Toggle all</button>
+                    </div>
+                    <div>
+                        ${byCat[cat].map(t => {
+                            const already = existing.has((t.name || '').toLowerCase().trim());
+                            const checked = (t.common || already) ? 'checked' : '';
+                            return `<label data-cat="${cat.replace(/"/g,'&quot;')}" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--border-color,#eee);cursor:pointer;${already ? 'opacity:.55;' : ''}">
+                                <input type="checkbox" class="catalog-trade" value="${t.i}" ${checked} ${already ? 'disabled' : ''} style="width:20px;height:20px;flex:0 0 auto;">
+                                <span style="flex:1;font-size:15px;color:var(--text-primary);">${t.name}${t.code ? ` <span style="color:var(--text-secondary,#8e8e93);font-size:12px;">${t.code}</span>` : ''}</span>
+                                ${already ? '<span style="font-size:11px;color:var(--text-secondary,#8e8e93);">added</span>' : ''}
+                            </label>`;
+                        }).join('')}
+                    </div>
+                </div>`).join('');
+            return `
+                <div class="defects-container">
+                    <div class="app-header">
+                        <a href="#" class="back-link" onclick="event.preventDefault(); showHomeView()">Skip</a>
+                        <div class="header-title">Choose your trades</div>
+                        <button class="icon-btn" onclick="addSelectedCatalogTrades()" title="Add selected">✓</button>
+                    </div>
+                    <div style="padding:14px;">
+                        <div style="font-size:13.5px;color:var(--text-secondary,#666);margin-bottom:14px;line-height:1.5;">
+                            Tick the trades you use on your builds — your workspace starts with just these, not a giant list. You can add, rename or remove any of them later in Manage. Want to name a specific supplier (e.g. your usual plumber)? Add them anytime under a trade.
+                        </div>
+                        ${sections}
+                        <button onclick="addSelectedCatalogTrades()" style="width:100%;background:var(--blue,#1E4DA8);color:#fff;border:none;border-radius:10px;padding:14px;font-weight:700;font-size:16px;cursor:pointer;margin-top:6px;">Add selected trades</button>
+                        <button onclick="showHomeView()" style="width:100%;background:transparent;color:var(--text-secondary,#888);border:none;padding:14px;font-size:14px;cursor:pointer;">Skip for now</button>
+                    </div>
+                </div>`;
+        }
+
+        function toggleCatalogCat(cat) {
+            const boxes = document.querySelectorAll(`label[data-cat="${cat}"] input.catalog-trade:not(:disabled)`);
+            const allOn = Array.from(boxes).every(b => b.checked);
+            boxes.forEach(b => b.checked = !allOn);
+        }
+
+        function addSelectedCatalogTrades() {
+            const picked = Array.from(document.querySelectorAll('input.catalog-trade:checked:not(:disabled)'))
+                .map(cb => TRADE_CATALOG_AU[parseInt(cb.value)]).filter(Boolean);
+            if (picked.length === 0) { showToast('Tick at least one trade, or Skip', true); return; }
+            const existing = new Set(db.getTrades().map(t => (t.name || '').toLowerCase().trim()));
+            let added = 0;
+            picked.forEach(t => {
+                if (existing.has((t.name || '').toLowerCase().trim())) return;
+                db.addTrade({ name: t.name, code: t.code || '' });
+                added++;
+            });
+            showToast(`${added} trade${added === 1 ? '' : 's'} added`);
+            showHomeView();
+        }
+
         function renderManageScreen() {
             const isDarkMode = document.body.classList.contains('dark-mode');
             return `
@@ -2810,6 +3042,7 @@
                         <div style="margin-bottom: 20px; padding: 20px; background: var(--card-bg); border: 2px solid var(--border-color); border-radius: 10px;">
                             <div style="font-size: 17px; font-weight: 600; margin-bottom: 4px; color: var(--text-primary);">📋 Trade types <span style="font-weight: 400; color: var(--text-secondary); font-size: 13px;">(${db.getTrades().length})</span></div>
                             <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">Your organisation's own copy of the starter list — edit any cost centre or name inline, add or remove rows.</div>
+                            <button class="btn btn-secondary" style="width: 100%; margin-bottom: 12px; padding: 11px; font-size: 14px;" onclick="openTradeSetup()">📚 Add trades from catalogue</button>
                             <div style="display: flex; gap: 6px; margin-bottom: 10px;">
                                 <input id="tt-new-code" placeholder="Code" style="width: 70px; padding: 9px; border: 1px solid var(--border-color); border-radius: 7px; font-size: 14px;">
                                 <input id="tt-new-name" placeholder="New trade name" style="flex: 1; padding: 9px; border: 1px solid var(--border-color); border-radius: 7px; font-size: 14px;">
@@ -6136,7 +6369,15 @@
         // Main render function
         function render() {
             const app = document.getElementById('app');
-            
+
+            // First run after creating a workspace: send the builder to the trade
+            // picker once, instead of an empty/overloaded list. Flag is set during
+            // onboarding (cloud-sync) and cleared here so it only fires once.
+            if (state.currentView === 'home' && localStorage.getItem('df_trade_setup_pending') === '1') {
+                localStorage.removeItem('df_trade_setup_pending');
+                state.currentView = 'trade-setup';
+            }
+
             let content = '';
             switch(state.currentView) {
                 case 'home':
@@ -6165,6 +6406,9 @@
                     break;
                 case 'manage':
                     content = renderManageScreen();
+                    break;
+                case 'trade-setup':
+                    content = renderTradeSetup();
                     break;
             }
 
@@ -8031,7 +8275,7 @@
       };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-sync.js?v=df-0009"></script>
+    <script src="cloud-sync.js?v=df-0010"></script>
     <!-- Service worker: precaches the app shell so the app OPENS with no signal,
          and auto-applies new versions (reload once when a new worker takes over). -->
     <script>
