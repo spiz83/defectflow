@@ -54,6 +54,27 @@
     currentRegion = (r || 'AU');
     try { localStorage.setItem('df_region', currentRegion); } catch (e) {}
   }
+
+  // ── My Tasks: a personal to-do list, PRIVATE to the signed-in user. Kept
+  // separate from the org-shared diff sync; simple direct CRUD + a local cache
+  // so the list shows instantly and offline.
+  let myTasks = [];
+  try { myTasks = JSON.parse(localStorage.getItem('df_tasks') || '[]') || []; } catch (e) { myTasks = []; }
+  function cacheTasks() { try { localStorage.setItem('df_tasks', JSON.stringify(myTasks)); } catch (e) {} }
+  function rerender() { if (typeof render === 'function' && !(window.isBusyEditing && window.isBusyEditing())) render(); }
+  async function loadTasks() {
+    if (!userId || !currentOrgId) return;
+    try {
+      const { data, error } = await sb.from('tasks')
+        .select('id, text, done, position, created_at')
+        .eq('org_id', currentOrgId).eq('user_id', userId)
+        .order('done', { ascending: true }).order('position', { ascending: true }).order('created_at', { ascending: true });
+      if (error) throw error;
+      myTasks = data || [];
+      cacheTasks();
+      rerender();
+    } catch (e) { console.warn('[CloudSync] loadTasks', e); }
+  }
   let showInactiveJobs = localStorage.getItem('dm_show_inactive') === '1';
   // idMap.<entity>[legacyId] = cloud uuid (jobs/trades/contractors/defects carry
   // a legacy_id integer = the app's local int id, so this maps cleanly).
@@ -95,6 +116,7 @@
     idMap.trades = {}; idMap.contractors = {}; idMap.addresses = {}; idMap.defects = {};
     dirty = false;
     persistSyncState();
+    myTasks = []; cacheTasks();   // personal tasks are per-user/per-org too
   }
 
   // ===========================================================================
@@ -1134,6 +1156,48 @@
       resetLocalData();
       try { await pullAll(); } catch (e) { console.error('[CloudJobs] reloadFromCloud', e); }
       if (typeof render === 'function') render();
+    },
+    // My Tasks — personal to-do list, private to this user. Optimistic local +
+    // cache, write-through to the cloud.
+    tasks: {
+      all: () => myTasks.slice(),
+      reload: () => loadTasks(),
+      add: async (text) => {
+        text = (text || '').trim();
+        if (!text || !userId || !currentOrgId) return;
+        const pos = myTasks.length;
+        const tmp = { id: 'tmp_' + pos + '_' + text.length, text, done: false, position: pos };
+        myTasks.push(tmp); cacheTasks(); rerender();
+        try {
+          const { data, error } = await sb.from('tasks')
+            .insert({ org_id: currentOrgId, user_id: userId, text, position: pos })
+            .select('id, text, done, position, created_at').single();
+          if (error) throw error;
+          const i = myTasks.indexOf(tmp); if (i !== -1) myTasks[i] = data; cacheTasks();
+        } catch (e) { console.warn('[CloudJobs] task add', e); }
+      },
+      toggle: async (id, done) => {
+        const t = myTasks.find(x => x.id === id); if (t) { t.done = !!done; cacheTasks(); rerender(); }
+        try { await sb.from('tasks').update({ done: !!done }).eq('id', id); }
+        catch (e) { console.warn('[CloudJobs] task toggle', e); }
+      },
+      rename: async (id, text) => {
+        text = (text || '').trim(); if (!text) return;
+        const t = myTasks.find(x => x.id === id); if (t) { t.text = text; cacheTasks(); }
+        try { await sb.from('tasks').update({ text }).eq('id', id); }
+        catch (e) { console.warn('[CloudJobs] task rename', e); }
+      },
+      remove: async (id) => {
+        myTasks = myTasks.filter(x => x.id !== id); cacheTasks(); rerender();
+        try { await sb.from('tasks').delete().eq('id', id); }
+        catch (e) { console.warn('[CloudJobs] task remove', e); }
+      },
+      clearDone: async () => {
+        const doneIds = myTasks.filter(x => x.done).map(x => x.id);
+        myTasks = myTasks.filter(x => !x.done); cacheTasks(); rerender();
+        try { if (doneIds.length) await sb.from('tasks').delete().in('id', doneIds); }
+        catch (e) { console.warn('[CloudJobs] task clearDone', e); }
+      }
     }
   };
 
@@ -1232,6 +1296,7 @@
         try { resetLocalData(); await pullAll(); }
         catch (e) { console.warn('[CloudSync] self-heal pull failed', e); }
       }
+      try { await loadTasks(); } catch (e) { /* tasks are non-critical */ }
       // `dirty` still set means offline edits are waiting (pullAll skipped/failed
       // to protect them) — don't claim "Synced".
       const offline = dirty || !navigator.onLine;

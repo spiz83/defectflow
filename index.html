@@ -2033,6 +2033,8 @@
 
                     ${renderMyJobsSection()}
 
+                    ${renderMyTasksSection()}
+
                     ${showMultiContractors() ? `
                     <div class="section-title">Multiple Contractors</div>
                     <div class="multi-select-wrapper">
@@ -2099,6 +2101,49 @@
                 </div>
             `;
         }
+
+        function htmlesc(s) {
+            return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // My Tasks — a personal to-do list (private to the signed-in user, synced).
+        function renderMyTasksSection() {
+            const cj = window.CloudJobs;
+            if (!cj || !cj.tasks) return '';   // only when the cloud is connected
+            const tasks = cj.tasks.all();
+            const open = tasks.filter(t => !t.done);
+            const done = tasks.filter(t => t.done);
+            const row = (t) => `
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-top:1px solid var(--brd,rgba(128,128,128,.18));">
+                    <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask('${t.id}', this.checked)" style="width:20px;height:20px;flex:0 0 auto;">
+                    <span style="flex:1;font-size:15px;${t.done ? 'text-decoration:line-through;opacity:.55;' : ''}">${htmlesc(t.text)}</span>
+                    <button onclick="deleteTask('${t.id}')" title="Delete" style="background:none;border:none;cursor:pointer;font-size:15px;opacity:.55;color:inherit;">✕</button>
+                </div>`;
+            return `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;">
+                    <div class="section-title" style="margin:0;">✅ My Tasks${open.length ? ` (${open.length})` : ''}</div>
+                    ${done.length ? `<div onclick="clearDoneTasks()" style="font-size:12px;color:var(--text-secondary,#888);cursor:pointer;">Clear ${done.length} done</div>` : ''}
+                </div>
+                <div style="border:1px solid var(--brd,rgba(128,128,128,.25));border-radius:10px;overflow:hidden;margin:8px 0 18px;">
+                    <div style="display:flex;gap:6px;padding:8px;">
+                        <input id="task-new" type="text" placeholder="Add a task for yourself…" onkeydown="if(event.key==='Enter'){event.preventDefault();addTask();}" style="flex:1;padding:10px;border:1px solid var(--border-color,#ccc);border-radius:8px;font-size:15px;">
+                        <button onclick="addTask()" style="flex:0 0 auto;background:var(--blue,#1E4DA8);color:#fff;border:none;border-radius:8px;padding:0 16px;font-weight:700;cursor:pointer;">Add</button>
+                    </div>
+                    ${open.map(row).join('')}
+                    ${done.length ? `<div style="padding:6px 10px;font-size:11px;color:var(--text-secondary,#999);background:var(--bg-secondary,#f5f5f5);border-top:1px solid var(--brd,rgba(128,128,128,.18));text-transform:uppercase;letter-spacing:.04em;">Done</div>` + done.map(row).join('') : ''}
+                    ${tasks.length === 0 ? `<div style="padding:14px 10px;font-size:13px;color:var(--text-secondary,#888);">No tasks yet — jot down what you need to do.</div>` : ''}
+                </div>`;
+        }
+        function addTask() {
+            const el = document.getElementById('task-new');
+            const v = el ? el.value : '';
+            if (!v.trim()) return;
+            if (el) el.value = '';
+            if (window.CloudJobs && window.CloudJobs.tasks) window.CloudJobs.tasks.add(v);
+        }
+        function toggleTask(id, checked) { if (window.CloudJobs && window.CloudJobs.tasks) window.CloudJobs.tasks.toggle(id, checked); }
+        function deleteTask(id) { if (window.CloudJobs && window.CloudJobs.tasks) window.CloudJobs.tasks.remove(id); }
+        function clearDoneTasks() { if (window.CloudJobs && window.CloudJobs.tasks) window.CloudJobs.tasks.clearDone(); }
 
         function renderViewDefectsContractor(contractorId) {
             const contractor = db.getContractor(contractorId);
@@ -2820,6 +2865,154 @@
             { cat:'Inspections & Handover', code:'', name:'NBN / Telco' }
         ];
 
+        // United States catalogue (draft — builder refines). Cost-centre codes are
+        // AU-specific so US/UK use none.
+        const TRADE_CATALOG_US = [
+            { cat:'Site & Prep', name:'Site Preparation' },
+            { cat:'Site & Prep', name:'Excavation & Grading', common:true },
+            { cat:'Site & Prep', name:'Erosion Control' },
+            { cat:'Site & Prep', name:'Demolition' },
+            { cat:'Site & Prep', name:'Utilities & Hookups' },
+            { cat:'Foundation', name:'Foundation & Footings', common:true },
+            { cat:'Foundation', name:'Concrete Flatwork' },
+            { cat:'Foundation', name:'Rebar & Steel' },
+            { cat:'Foundation', name:'Foundation Waterproofing' },
+            { cat:'Framing', name:'Framing', common:true },
+            { cat:'Framing', name:'Structural Steel' },
+            { cat:'Framing', name:'Trusses' },
+            { cat:'Exterior', name:'Roofing', common:true },
+            { cat:'Exterior', name:'Siding', common:true },
+            { cat:'Exterior', name:'Stucco' },
+            { cat:'Exterior', name:'Masonry & Brick' },
+            { cat:'Exterior', name:'Gutters' },
+            { cat:'Exterior', name:'Windows & Exterior Doors', common:true },
+            { cat:'Exterior', name:'Garage Doors' },
+            { cat:'Plumbing', name:'Plumbing Rough-In', common:true },
+            { cat:'Plumbing', name:'Plumbing Fixtures', common:true },
+            { cat:'Plumbing', name:'Water Heater' },
+            { cat:'Plumbing', name:'Septic & Sewer' },
+            { cat:'Electrical', name:'Electrical Rough-In', common:true },
+            { cat:'Electrical', name:'Electrical Fixtures', common:true },
+            { cat:'Electrical', name:'Low Voltage & Data' },
+            { cat:'Electrical', name:'Solar' },
+            { cat:'HVAC', name:'HVAC', common:true },
+            { cat:'HVAC', name:'Ductwork' },
+            { cat:'Insulation & Drywall', name:'Insulation' },
+            { cat:'Insulation & Drywall', name:'Drywall', common:true },
+            { cat:'Insulation & Drywall', name:'Tape & Texture' },
+            { cat:'Interior', name:'Interior Trim & Carpentry', common:true },
+            { cat:'Interior', name:'Interior Doors' },
+            { cat:'Interior', name:'Stairs & Railings' },
+            { cat:'Interior', name:'Painting', common:true },
+            { cat:'Kitchen & Bath', name:'Cabinetry', common:true },
+            { cat:'Kitchen & Bath', name:'Countertops' },
+            { cat:'Kitchen & Bath', name:'Tile', common:true },
+            { cat:'Kitchen & Bath', name:'Glass & Mirrors' },
+            { cat:'Kitchen & Bath', name:'Appliances' },
+            { cat:'Flooring', name:'Flooring', common:true },
+            { cat:'Flooring', name:'Carpet' },
+            { cat:'Flooring', name:'Hardwood' },
+            { cat:'Exterior Works', name:'Driveway & Flatwork' },
+            { cat:'Exterior Works', name:'Decking' },
+            { cat:'Exterior Works', name:'Fencing' },
+            { cat:'Exterior Works', name:'Landscaping' },
+            { cat:'Final', name:'Final Clean', common:true },
+            { cat:'Final', name:'Punch List & QA', common:true },
+            { cat:'Final', name:'Pest Control' },
+            { cat:'Final', name:'Inspections' }
+        ];
+
+        // United Kingdom catalogue (draft — builder refines).
+        const TRADE_CATALOG_UK = [
+            { cat:'Site', name:'Site Setup & Welfare' },
+            { cat:'Site', name:'Groundworks & Excavation', common:true },
+            { cat:'Site', name:'Drainage' },
+            { cat:'Site', name:'Demolition' },
+            { cat:'Structure', name:'Foundations & Concrete', common:true },
+            { cat:'Structure', name:'Brickwork & Blockwork', common:true },
+            { cat:'Structure', name:'Structural Steel' },
+            { cat:'Structure', name:'Roof Carpentry (1st Fix)', common:true },
+            { cat:'Roof & External', name:'Roofing & Tiling', common:true },
+            { cat:'Roof & External', name:'Fascias, Soffits & Guttering' },
+            { cat:'Roof & External', name:'Scaffolding' },
+            { cat:'Roof & External', name:'Windows & External Doors', common:true },
+            { cat:'Roof & External', name:'Render' },
+            { cat:'Roof & External', name:'Cladding' },
+            { cat:'1st Fix Services', name:'Plumbing 1st Fix', common:true },
+            { cat:'1st Fix Services', name:'Electrical 1st Fix', common:true },
+            { cat:'1st Fix Services', name:'Heating & Boiler', common:true },
+            { cat:'1st Fix Services', name:'Gas' },
+            { cat:'Linings', name:'Insulation' },
+            { cat:'Linings', name:'Plastering & Plasterboard', common:true },
+            { cat:'Linings', name:'Drylining' },
+            { cat:'2nd Fix', name:'Joinery 2nd Fix', common:true },
+            { cat:'2nd Fix', name:'Internal Doors' },
+            { cat:'2nd Fix', name:'Staircase' },
+            { cat:'2nd Fix', name:'Kitchen Units', common:true },
+            { cat:'2nd Fix', name:'Wardrobes' },
+            { cat:'Wet Areas & Tiling', name:'Wall & Floor Tiling', common:true },
+            { cat:'Wet Areas & Tiling', name:'Waterproofing & Tanking', common:true },
+            { cat:'Wet Areas & Tiling', name:'Sanitaryware (Plumbing 2nd Fix)', common:true },
+            { cat:'Finishes', name:'Electrical 2nd Fix', common:true },
+            { cat:'Finishes', name:'Painting & Decorating', common:true },
+            { cat:'Finishes', name:'Flooring & Carpets', common:true },
+            { cat:'Finishes', name:'Glazing & Splashbacks' },
+            { cat:'External', name:'Driveways & Paving' },
+            { cat:'External', name:'Landscaping & Turfing' },
+            { cat:'External', name:'Fencing & Gates' },
+            { cat:'External', name:'Garage Doors' },
+            { cat:'Final', name:'Appliances' },
+            { cat:'Final', name:'Solar PV' },
+            { cat:'Final', name:'Pest Control' },
+            { cat:'Final', name:'Final Clean', common:true },
+            { cat:'Final', name:'Snagging & QA', common:true },
+            { cat:'Final', name:'EICR / Inspections' }
+        ];
+
+        // Generic / international neutral catalogue.
+        const TRADE_CATALOG_GENERIC = [
+            { cat:'Site', name:'Site Preparation' },
+            { cat:'Site', name:'Earthworks & Excavation', common:true },
+            { cat:'Site', name:'Drainage' },
+            { cat:'Structure', name:'Foundations & Concrete', common:true },
+            { cat:'Structure', name:'Framing & Structure', common:true },
+            { cat:'Structure', name:'Bricklaying & Masonry', common:true },
+            { cat:'Roof & External', name:'Roofing', common:true },
+            { cat:'Roof & External', name:'Guttering & Fascia' },
+            { cat:'Roof & External', name:'Scaffolding' },
+            { cat:'Roof & External', name:'Windows & Doors', common:true },
+            { cat:'Roof & External', name:'Cladding' },
+            { cat:'Services', name:'Plumbing', common:true },
+            { cat:'Services', name:'Electrical', common:true },
+            { cat:'Services', name:'Heating & Cooling (HVAC)', common:true },
+            { cat:'Linings', name:'Insulation' },
+            { cat:'Linings', name:'Plastering & Drywall', common:true },
+            { cat:'Linings', name:'Rendering' },
+            { cat:'Fit Out', name:'Carpentry', common:true },
+            { cat:'Fit Out', name:'Cabinetry & Joinery', common:true },
+            { cat:'Fit Out', name:'Staircase' },
+            { cat:'Wet Areas', name:'Waterproofing', common:true },
+            { cat:'Wet Areas', name:'Tiling', common:true },
+            { cat:'Wet Areas', name:'Plumbing Fixtures' },
+            { cat:'Finishes', name:'Painting', common:true },
+            { cat:'Finishes', name:'Flooring', common:true },
+            { cat:'Finishes', name:'Glazing & Mirrors' },
+            { cat:'External', name:'Driveway & Paving' },
+            { cat:'External', name:'Fencing' },
+            { cat:'External', name:'Landscaping' },
+            { cat:'External', name:'Garage Doors' },
+            { cat:'Final', name:'Appliances' },
+            { cat:'Final', name:'Cleaning', common:true },
+            { cat:'Final', name:'Final Inspection & QA', common:true },
+            { cat:'Final', name:'Pest Control' }
+        ];
+
+        // The catalogue for the workspace's region (set at signup).
+        function tradeCatalog() {
+            const r = (window.CloudJobs && window.CloudJobs.region && window.CloudJobs.region()) || 'AU';
+            return ({ AU: TRADE_CATALOG_AU, US: TRADE_CATALOG_US, UK: TRADE_CATALOG_UK, GENERIC: TRADE_CATALOG_GENERIC })[r] || TRADE_CATALOG_AU;
+        }
+
         function openTradeSetup() {
             state.currentView = 'trade-setup';
             render();
@@ -2827,9 +3020,10 @@
 
         function renderTradeSetup() {
             const existing = new Set(db.getTrades().map(t => (t.name || '').toLowerCase().trim()));
+            const CAT = tradeCatalog();
             const cats = [];
             const byCat = {};
-            TRADE_CATALOG_AU.forEach((t, i) => {
+            CAT.forEach((t, i) => {
                 if (!byCat[t.cat]) { byCat[t.cat] = []; cats.push(t.cat); }
                 byCat[t.cat].push({ ...t, i });
             });
@@ -2876,8 +3070,9 @@
         }
 
         function addSelectedCatalogTrades() {
+            const CAT = tradeCatalog();
             const picked = Array.from(document.querySelectorAll('input.catalog-trade:checked:not(:disabled)'))
-                .map(cb => TRADE_CATALOG_AU[parseInt(cb.value)]).filter(Boolean);
+                .map(cb => CAT[parseInt(cb.value)]).filter(Boolean);
             if (picked.length === 0) { showToast('Tick at least one trade, or Skip', true); return; }
             const existing = new Set(db.getTrades().map(t => (t.name || '').toLowerCase().trim()));
             let added = 0;
@@ -8275,7 +8470,7 @@
       };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-sync.js?v=df-0010"></script>
+    <script src="cloud-sync.js?v=df-0011"></script>
     <!-- Service worker: precaches the app shell so the app OPENS with no signal,
          and auto-applies new versions (reload once when a new worker takes over). -->
     <script>
