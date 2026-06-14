@@ -3085,6 +3085,164 @@
             showHomeView();
         }
 
+        // ====================================================================
+        //  First-run tutorial (6 pages). Pages 1-2 are interactive (add an
+        //  address, pick >=10 trades); 3-6 walk through the core workflow.
+        // ====================================================================
+        function startTutorial() {
+            state.currentView = 'tutorial';
+            state.tutorialStep = 1;
+            state.tutAddressId = state.tutAddressId || null;
+            render();
+        }
+        function tutFinish() {
+            try { localStorage.setItem('df_tutorial_done', '1'); } catch (e) {}
+            showHomeView();
+        }
+        function tutBack() { state.tutorialStep = Math.max(1, (state.tutorialStep || 1) - 1); render(); }
+        function tutNext() {
+            const step = state.tutorialStep || 1;
+            if (step === 1) {
+                const val = ((document.getElementById('tut-address') || {}).value || '').trim();
+                if (!val) { showToast('Add an address to continue', true); return; }
+                if (state.tutAddressId && db.getAddress(state.tutAddressId)) {
+                    const a = db.getAddress(state.tutAddressId); a.name = val; db.save();
+                } else {
+                    const a = db.addAddress({ name: val }); state.tutAddressId = a.id;
+                }
+            } else if (step === 2) {
+                const CAT = tradeCatalog();
+                const picked = Array.from(document.querySelectorAll('input.catalog-trade:checked:not(:disabled)'))
+                    .map(cb => CAT[parseInt(cb.value)]).filter(Boolean);
+                if (picked.length < 10) { showToast(`Select at least 10 trades — ${picked.length} so far`, true); return; }
+                const existing = new Set(db.getTrades().map(t => (t.name || '').toLowerCase().trim()));
+                picked.forEach(t => { if (!existing.has((t.name || '').toLowerCase().trim())) db.addTrade({ name: t.name, code: t.code || '' }); });
+            }
+            state.tutorialStep = Math.min(6, step + 1);
+            render();
+        }
+        function tutUpdateCount() {
+            const n = document.querySelectorAll('input.catalog-trade:checked:not(:disabled)').length;
+            const el = document.getElementById('tut-trade-count');
+            if (el) { el.textContent = `${n} selected`; el.style.color = n >= 10 ? 'var(--green,#1a8f3c)' : 'var(--red,#DC143C)'; }
+        }
+        function renderTutorial() {
+            const step = state.tutorialStep || 1;
+            const dots = [1,2,3,4,5,6].map(n => `<span style="width:9px;height:9px;border-radius:50%;background:${n === step ? 'var(--blue,#1E4DA8)' : 'rgba(128,128,128,.3)'};"></span>`).join('');
+            const wrap = (title, body, opts = {}) => `
+                <div class="defects-container">
+                    <div class="app-header">
+                        <a href="#" class="back-link" onclick="event.preventDefault(); tutFinish()">Skip</a>
+                        <div class="header-title">Get started</div>
+                        <div style="width:60px;"></div>
+                    </div>
+                    <div style="padding:16px 16px 90px;">
+                        <div style="display:flex;gap:7px;justify-content:center;margin:4px 0 18px;">${dots}</div>
+                        <div style="font-size:13px;font-weight:700;color:var(--blue,#1E4DA8);text-transform:uppercase;letter-spacing:.05em;">Step ${step} of 6</div>
+                        <div style="font-size:22px;font-weight:800;margin:4px 0 12px;color:var(--text-primary);">${title}</div>
+                        ${body}
+                    </div>
+                    <div style="position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;padding:12px 16px;background:var(--bg-primary,#fff);border-top:1px solid var(--border-color,#ddd);">
+                        ${step > 1 ? `<button onclick="tutBack()" style="flex:0 0 auto;background:transparent;border:1px solid var(--border-color,#ccc);border-radius:10px;padding:13px 20px;font-weight:600;font-size:15px;cursor:pointer;color:inherit;">Back</button>` : ''}
+                        <button onclick="${opts.finish ? 'tutFinish()' : 'tutNext()'}" style="flex:1;background:var(--blue,#1E4DA8);color:#fff;border:none;border-radius:10px;padding:13px;font-weight:700;font-size:16px;cursor:pointer;">${opts.nextLabel || (opts.finish ? 'Finish — go to app' : 'Next')}</button>
+                    </div>
+                </div>`;
+            const card = (icon, head, text) => `<div style="display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid var(--border-color,#e3e3e3);border-radius:12px;margin-bottom:14px;background:var(--card-bg,#fafafa);">
+                <div style="font-size:26px;flex:0 0 auto;">${icon}</div>
+                <div><div style="font-weight:700;font-size:15px;margin-bottom:3px;color:var(--text-primary);">${head}</div><div style="font-size:14px;color:var(--text-secondary,#555);line-height:1.5;">${text}</div></div></div>`;
+            const inp = 'width:100%;box-sizing:border-box;padding:13px;border:1px solid var(--border-color,#ccc);border-radius:10px;font-size:16px;';
+
+            if (step === 1) {
+                const saved = state.tutAddressId ? db.getAddress(state.tutAddressId) : null;
+                const c = (typeof regionAddressConfig === 'function') ? regionAddressConfig() : { streetPh: 'e.g. 14 Banksia Drive, Wollert' };
+                return wrap('Add your first job', `
+                    <div style="font-size:15px;color:var(--text-secondary,#555);line-height:1.55;margin-bottom:16px;">A job is just an address or site. Type it however you refer to it — one line, that's it.</div>
+                    <label style="font-size:13px;font-weight:600;color:var(--text-secondary,#666);">Address</label>
+                    <input id="tut-address" type="text" autocapitalize="words" placeholder="${c.streetPh}" value="${htmlesc(saved ? saved.name : '')}" style="${inp}margin-top:6px;">
+                    ${card('🏠', 'You can add as many as you like', 'After the tour, tap “＋ Add job” on the home screen any time. Jobs you finish can be marked complete (step 6).')}
+                `);
+            }
+            if (step === 2) {
+                const CAT = tradeCatalog();
+                const existing = new Set(db.getTrades().map(t => (t.name || '').toLowerCase().trim()));
+                const cats = []; const byCat = {};
+                CAT.forEach((t, i) => { if (!byCat[t.cat]) { byCat[t.cat] = []; cats.push(t.cat); } byCat[t.cat].push({ ...t, i }); });
+                const sections = cats.map(cat => `
+                    <div style="margin-bottom:12px;border:1px solid var(--border-color,#ddd);border-radius:10px;overflow:hidden;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--bg-secondary,#f3f3f3);">
+                            <div style="font-weight:700;font-size:13.5px;color:var(--text-primary);">${cat}</div>
+                            <button type="button" onclick="toggleCatalogCat('${cat.replace(/'/g, "\\'")}');tutUpdateCount();" style="background:none;border:1px solid var(--border-color,#ccc);border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer;color:inherit;">Toggle all</button>
+                        </div>
+                        ${byCat[cat].map(t => {
+                            const already = existing.has((t.name || '').toLowerCase().trim());
+                            return `<label data-cat="${cat.replace(/"/g,'&quot;')}" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--border-color,#eee);cursor:pointer;${already ? 'opacity:.55;' : ''}">
+                                <input type="checkbox" class="catalog-trade" value="${t.i}" ${(t.common || already) ? 'checked' : ''} ${already ? 'disabled' : ''} onchange="tutUpdateCount()" style="width:20px;height:20px;flex:0 0 auto;">
+                                <span style="flex:1;font-size:14.5px;color:var(--text-primary);">${htmlesc(t.name)}</span>
+                                ${already ? '<span style="font-size:11px;color:var(--text-secondary,#8e8e93);">added</span>' : ''}
+                            </label>`;
+                        }).join('')}
+                    </div>`).join('');
+                const preCount = CAT.filter(t => t.common && !existing.has((t.name||'').toLowerCase().trim())).length;
+                return wrap('Choose your trades', `
+                    <div style="font-size:15px;color:var(--text-secondary,#555);line-height:1.55;margin-bottom:6px;">Tick the trades you use on your builds — <b>at least 10</b>. These are the common Australian construction trades; add, rename or remove any later.</div>
+                    <div style="position:sticky;top:0;z-index:2;background:var(--bg-primary,#fff);padding:8px 0;font-size:14px;font-weight:700;"><span id="tut-trade-count" style="color:${preCount>=10?'var(--green,#1a8f3c)':'var(--red,#DC143C)'};">${preCount} selected</span> <span style="font-weight:400;color:var(--text-secondary,#888);">(need 10+)</span></div>
+                    ${sections}
+                `);
+            }
+            if (step === 3) {
+                return wrap('Log defects', `
+                    <div style="font-size:15px;color:var(--text-secondary,#555);line-height:1.55;margin-bottom:14px;">Open a job and tap <b>＋ Add Defects</b>. You can log against <b>several suppliers (or trade types) at once</b> — each block takes multiple defects, and you can attach a 📷 photo to any of them.</div>
+                    <div style="border:1px solid var(--border-color,#ddd);border-radius:12px;overflow:hidden;">
+                        <div style="background:var(--bg-secondary,#f3f3f3);padding:8px 12px;font-weight:700;font-size:13px;">Lot 12, 14 Banksia Drive</div>
+                        ${['Carpenter - Fix Out','Plumber - Fit Off'].map(s => `
+                        <div style="padding:10px 12px;border-top:1px solid var(--border-color,#eee);">
+                            <div style="font-weight:600;font-size:14px;margin-bottom:6px;">👤 ${s}</div>
+                            <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;"><span style="opacity:.5;">📍</span><div style="flex:1;border:1px solid var(--border-color,#ddd);border-radius:6px;padding:7px;font-size:13px;color:var(--text-secondary,#888);">Scratch on architrave</div><span>📷</span></div>
+                            <div style="display:flex;gap:6px;align-items:center;"><span style="opacity:.5;">📍</span><div style="flex:1;border:1px solid var(--border-color,#ddd);border-radius:6px;padding:7px;font-size:13px;color:var(--text-secondary,#888);">Door not closing</div><span>📷</span></div>
+                        </div>`).join('')}
+                    </div>
+                    ${card('🔧', 'No supplier? Use a trade type', 'Type a trade (e.g. “Tiler”) and log straight against it — you don’t need to name a company.')}
+                `);
+            }
+            if (step === 4) {
+                return wrap('View defects', `
+                    <div style="font-size:15px;color:var(--text-secondary,#555);line-height:1.55;margin-bottom:14px;">Tap a job to see its defects, grouped by supplier/trade. Each shows its status; tap the 📷 to view photos.</div>
+                    <div style="border:1px solid var(--border-color,#ddd);border-radius:12px;overflow:hidden;">
+                        <div style="background:var(--bg-secondary,#f3f3f3);padding:8px 12px;font-weight:700;font-size:13px;">Carpenter - Fix Out</div>
+                        ${[['Open','Scratch on architrave'],['Pending','Door not closing']].map(d => `
+                        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border-color,#eee);">
+                            <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:${d[0]==='Open'?'rgba(220,20,60,.12);color:#DC143C':'rgba(230,160,0,.15);color:#b07a00'};">${d[0]}</span>
+                            <span style="flex:1;font-size:14px;">${d[1]}</span><span>📷</span>
+                        </div>`).join('')}
+                    </div>
+                `);
+            }
+            if (step === 5) {
+                return wrap('Email a trade', `
+                    <div style="font-size:15px;color:var(--text-secondary,#555);line-height:1.55;margin-bottom:14px;">In a job’s defect view, each supplier has an <b>✉️ button</b> — it emails <b>that trade</b> their list of defects (with photos) in one tap, so they know exactly what to fix.</div>
+                    <div style="border:1px solid var(--border-color,#ddd);border-radius:12px;overflow:hidden;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-secondary,#f3f3f3);padding:10px 12px;">
+                            <div style="font-weight:700;font-size:14px;">Plumber - Fit Off</div>
+                            <div style="display:flex;gap:8px;"><span style="border:1px solid var(--border-color,#ccc);border-radius:6px;padding:3px 8px;font-size:13px;">📅</span><span style="border:1px solid var(--blue,#1E4DA8);color:var(--blue,#1E4DA8);border-radius:6px;padding:3px 8px;font-size:13px;font-weight:700;">✉️ Email</span></div>
+                        </div>
+                        <div style="padding:10px 12px;font-size:13px;color:var(--text-secondary,#888);">Sends their defects + photos straight to their inbox.</div>
+                    </div>
+                `);
+            }
+            // step 6
+            return wrap('Mark as complete', `
+                <div style="font-size:15px;color:var(--text-secondary,#555);line-height:1.55;margin-bottom:14px;">Tap a defect’s status to move it <b>Open → Pending → Complete</b>. When everything’s done, the job clears from your active list. That’s the whole loop!</div>
+                <div style="border:1px solid var(--border-color,#ddd);border-radius:12px;overflow:hidden;">
+                    ${[['Open','#DC143C','rgba(220,20,60,.12)'],['Pending','#b07a00','rgba(230,160,0,.15)'],['Complete','#1a8f3c','rgba(26,143,60,.15)']].map(s => `
+                    <div style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-top:1px solid var(--border-color,#eee);">
+                        <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:11px;background:${s[2]};color:${s[1]};">${s[0]}</span>
+                        <span style="flex:1;font-size:14px;${s[0]==='Complete'?'text-decoration:line-through;opacity:.6;':''}">Door not closing</span>
+                    </div>`).join('')}
+                </div>
+                ${card('🎉', 'You’re set up', 'Your job and trades are saved. Add suppliers any time, and find everything again under Manage.')}
+            `, { finish: true });
+        }
+
         function renderManageScreen() {
             const isDarkMode = document.body.classList.contains('dark-mode');
             return `
@@ -3229,6 +3387,17 @@
                                     <div style="font-size: 14px; color: var(--text-secondary);">Trades, suppliers or jobs not showing? Pull a fresh copy from the cloud.</div>
                                 </div>
                                 <button class="btn btn-primary" style="padding: 10px 18px; font-size: 14px;" onclick="reloadFromCloud()">Reload</button>
+                            </div>
+                        </div>
+
+                        <!-- Replay the first-run tutorial -->
+                        <div style="margin-bottom: 20px; padding: 20px; background: var(--card-bg); border: 2px solid var(--border-color); border-radius: 10px;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                                <div>
+                                    <div style="font-size: 17px; font-weight: 600; margin-bottom: 5px; color: var(--text-primary);">▶️ Replay tutorial</div>
+                                    <div style="font-size: 14px; color: var(--text-secondary);">Walk through the 6-step get-started guide again.</div>
+                                </div>
+                                <button class="btn btn-secondary" style="padding: 10px 18px; font-size: 14px;" onclick="startTutorial()">Start</button>
                             </div>
                         </div>
 
@@ -6570,7 +6739,8 @@
             // onboarding (cloud-sync) and cleared here so it only fires once.
             if (state.currentView === 'home' && localStorage.getItem('df_trade_setup_pending') === '1') {
                 localStorage.removeItem('df_trade_setup_pending');
-                state.currentView = 'trade-setup';
+                state.currentView = 'tutorial';
+                state.tutorialStep = 1;
             }
 
             let content = '';
@@ -6604,6 +6774,9 @@
                     break;
                 case 'trade-setup':
                     content = renderTradeSetup();
+                    break;
+                case 'tutorial':
+                    content = renderTutorial();
                     break;
             }
 
@@ -8470,7 +8643,7 @@
       };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-sync.js?v=df-0011"></script>
+    <script src="cloud-sync.js?v=df-0012"></script>
     <!-- Service worker: precaches the app shell so the app OPENS with no signal,
          and auto-applies new versions (reload once when a new worker takes over). -->
     <script>
