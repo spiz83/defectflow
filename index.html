@@ -1650,6 +1650,14 @@
             // from the trade type (negative id so it never collides with a real
             // contractor id), otherwise an Unassigned fallback. Always returns an
             // object with {id, name, isTrade} so views never break on a null.
+            // A trade's nominated supplier: the contractor the builder has put
+            // against that trade (e.g. "John's Plumbing" for Plumber). The first
+            // contractor assigned to the trade represents it.
+            nominatedContractorForTrade(tradeId) {
+                if (tradeId == null) return null;
+                return this.data.contractors.find(c => Array.isArray(c.tradeIds) && c.tradeIds.includes(tradeId)) || null;
+            }
+
             partyForDefect(d) {
                 const c = this.getContractor(d.contractorId);
                 if (c) return c;
@@ -1724,7 +1732,9 @@
                 const newTrade = {
                     id,
                     name: trade.name,
-                    code: trade.code || '',
+                    // Cost centres are now just a hidden unique identifier — auto-
+                    // generated when none is given, never shown in the UI.
+                    code: trade.code || ('C' + id),
                     hidden: trade.hidden || false
                 };
                 this.data.trades.push(newTrade);
@@ -2922,7 +2932,7 @@
                 if (!byCat[t.cat]) { byCat[t.cat] = []; cats.push(t.cat); }
                 byCat[t.cat].push({ ...t, i });
             });
-            const sections = cats.map(cat => `
+            const sections = cats.map((cat, ci) => `
                 <div style="margin-bottom:14px;border:1px solid var(--border-color,#ddd);border-radius:10px;overflow:hidden;">
                     <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg-secondary,#f3f3f3);">
                         <div style="font-weight:700;font-size:14px;color:var(--text-primary);">${cat}</div>
@@ -2934,12 +2944,27 @@
                             const checked = (t.common || already) ? 'checked' : '';
                             return `<label data-cat="${cat.replace(/"/g,'&quot;')}" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--border-color,#eee);cursor:pointer;${already ? 'opacity:.55;' : ''}">
                                 <input type="checkbox" class="catalog-trade" value="${t.i}" ${checked} ${already ? 'disabled' : ''} style="width:20px;height:20px;flex:0 0 auto;">
-                                <span style="flex:1;font-size:15px;color:var(--text-primary);">${t.name}${t.code ? ` <span style="color:var(--text-secondary,#8e8e93);font-size:12px;">${t.code}</span>` : ''}</span>
+                                <span style="flex:1;font-size:15px;color:var(--text-primary);">${t.name}</span>
                                 ${already ? '<span style="font-size:11px;color:var(--text-secondary,#8e8e93);">added</span>' : ''}
                             </label>`;
                         }).join('')}
+                        <div style="display:flex;gap:6px;padding:8px 12px;border-top:1px solid var(--border-color,#eee);">
+                            <input id="addcat-${ci}" placeholder="+ Add a trade" onkeydown="if(event.key==='Enter'){event.preventDefault();addCatalogTrade('addcat-${ci}');}" style="flex:1;padding:8px;border:1px solid var(--border-color,#ddd);border-radius:6px;font-size:14px;">
+                            <button type="button" onclick="addCatalogTrade('addcat-${ci}')" style="background:transparent;border:1px solid var(--border-color,#ccc);border-radius:6px;padding:0 12px;font-size:13px;cursor:pointer;color:inherit;">Add</button>
+                        </div>
                     </div>
                 </div>`).join('');
+            const catalogNames = new Set(CAT.map(t => (t.name || '').toLowerCase().trim()));
+            const customTrades = db.getTrades().filter(t => !catalogNames.has((t.name || '').toLowerCase().trim()));
+            const customSection = customTrades.length ? `
+                <div style="margin-bottom:14px;border:1px solid var(--border-color,#ddd);border-radius:10px;overflow:hidden;">
+                    <div style="padding:10px 12px;background:var(--bg-secondary,#f3f3f3);font-weight:700;font-size:14px;color:var(--text-primary);">Your added trades</div>
+                    ${customTrades.map(t => `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--border-color,#eee);">
+                        <span style="flex:1;font-size:15px;color:var(--text-primary);">${htmlesc(t.name)}</span>
+                        <span style="font-size:11px;color:var(--text-secondary,#8e8e93);">added</span>
+                        <button onclick="deleteTradeRow(${t.id})" title="Remove" style="background:none;border:none;cursor:pointer;font-size:15px;opacity:.55;color:inherit;">🗑️</button>
+                    </div>`).join('')}
+                </div>` : '';
             return `
                 <div class="defects-container">
                     <div class="app-header">
@@ -2952,6 +2977,7 @@
                             Tick the trades you use on your builds — your workspace starts with just these, not a giant list. You can add, rename or remove any of them later in Manage. Want to name a specific supplier (e.g. your usual plumber)? Add them anytime under a trade.
                         </div>
                         ${sections}
+                        ${customSection}
                         <button onclick="addSelectedCatalogTrades()" style="width:100%;background:var(--blue,#1E4DA8);color:#fff;border:none;border-radius:10px;padding:14px;font-weight:700;font-size:16px;cursor:pointer;margin-top:6px;">Add selected trades</button>
                         <button onclick="showHomeView()" style="width:100%;background:transparent;color:var(--text-secondary,#888);border:none;padding:14px;font-size:14px;cursor:pointer;">Skip for now</button>
                     </div>
@@ -2962,6 +2988,19 @@
             const boxes = document.querySelectorAll(`label[data-cat="${cat}"] input.catalog-trade:not(:disabled)`);
             const allOn = Array.from(boxes).every(b => b.checked);
             boxes.forEach(b => b.checked = !allOn);
+        }
+
+        // Add a custom trade from the picker (auto cost-centre, hidden). Re-renders
+        // so it appears under "Your added trades".
+        function addCatalogTrade(inputId) {
+            const el = document.getElementById(inputId);
+            const name = el ? el.value.trim() : '';
+            if (!name) return;
+            const exists = db.getTrades().some(t => (t.name || '').toLowerCase().trim() === name.toLowerCase());
+            if (exists) { showToast('That trade is already in your list', true); return; }
+            db.addTrade({ name });
+            showToast(`Added ${name}`);
+            render();
         }
 
         function addSelectedCatalogTrades() {
@@ -3303,14 +3342,12 @@
                             <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">Your organisation's own copy of the starter list — edit any cost centre or name inline, add or remove rows.</div>
                             <button class="btn btn-secondary" style="width: 100%; margin-bottom: 12px; padding: 11px; font-size: 14px;" onclick="openTradeSetup()">📚 Add trades from catalogue</button>
                             <div style="display: flex; gap: 6px; margin-bottom: 10px;">
-                                <input id="tt-new-code" placeholder="Code" style="width: 70px; padding: 9px; border: 1px solid var(--border-color); border-radius: 7px; font-size: 14px;">
-                                <input id="tt-new-name" placeholder="New trade name" style="flex: 1; padding: 9px; border: 1px solid var(--border-color); border-radius: 7px; font-size: 14px;">
+                                <input id="tt-new-name" placeholder="Add a trade…" style="flex: 1; padding: 9px; border: 1px solid var(--border-color); border-radius: 7px; font-size: 14px;">
                                 <button class="btn btn-primary" style="padding: 9px 14px; font-size: 14px;" onclick="addTradeRow()">Add</button>
                             </div>
                             <div style="max-height: 340px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px;">
                                 ${db.getTrades().slice().sort((a, b) => (parseInt(a.code) || 9999) - (parseInt(b.code) || 9999)).map(t => `
                                     <div style="display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--border-color);">
-                                        <input value="${(t.code || '').replace(/"/g, '&quot;')}" onblur="amendTrade(${t.id}, 'code', this.value)" style="width: 64px; padding: 7px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px;">
                                         <input value="${(t.name || '').replace(/"/g, '&quot;')}" onblur="amendTrade(${t.id}, 'name', this.value)" style="flex: 1; padding: 7px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px;">
                                         <button onclick="deleteTradeRow(${t.id})" title="Delete trade" style="flex: 0 0 auto; background: none; border: none; cursor: pointer; font-size: 16px;">🗑️</button>
                                     </div>`).join('')}
@@ -4065,11 +4102,18 @@
                 return;
             }
 
-            const tradeRows = trades.map(t => `
-                <div class="autocomplete-item" onclick="selectAddDefectsTrade(${t.id}, '${t.name.replace(/'/g, "\\'")}', ${contractorNum || 0})">
-                    🔧 ${t.name}${t.code ? ' · ' + t.code : ''} <span style="color: var(--text-secondary, #8e8e93); font-size: 12px;">trade type</span>
-                </div>
-            `).join('');
+            const tradeRows = trades.map(t => {
+                const nom = db.nominatedContractorForTrade(t.id);
+                if (nom) {
+                    // Trade has a nominated supplier — offer them by name.
+                    return `<div class="autocomplete-item" onclick="selectAddDefectsContractor(${nom.id}, '${nom.name.replace(/'/g, "\\'")}', ${contractorNum || 0})">
+                        👤 ${nom.name} <span style="color: var(--text-secondary, #8e8e93); font-size: 12px;">${t.name}</span>
+                    </div>`;
+                }
+                return `<div class="autocomplete-item" onclick="selectAddDefectsTrade(${t.id}, '${t.name.replace(/'/g, "\\'")}', ${contractorNum || 0})">
+                    🔧 ${t.name} <span style="color: var(--text-secondary, #8e8e93); font-size: 12px;">trade type</span>
+                </div>`;
+            }).join('');
             const contractorRows = contractors.map(c => `
                 <div class="autocomplete-item" onclick="selectAddDefectsContractor(${c.id}, '${c.name.replace(/'/g, "\\'")}', ${contractorNum || 0})">
                     👤 ${c.name} <span style="color: var(--text-secondary, #8e8e93); font-size: 12px;">${c.trades || 'No Trade'}</span>
@@ -8538,7 +8582,7 @@
       };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-sync.js?v=df-0014"></script>
+    <script src="cloud-sync.js?v=df-0015"></script>
     <!-- Service worker: precaches the app shell so the app OPENS with no signal,
          and auto-applies new versions (reload once when a new worker takes over). -->
     <script>
